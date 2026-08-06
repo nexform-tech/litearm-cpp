@@ -1,0 +1,72 @@
+[
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -Wall -Wextra -Wpedantic -std=gnu++17 -o CMakeFiles/litearm.dir/src/exceptions.cpp.o -c /home/llx/litearm-cpp/src/exceptions.cpp",
+  "file": "/home/llx/litearm-cpp/src/exceptions.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -Wall -Wextra -Wpedantic -std=gnu++17 -o CMakeFiles/litearm.dir/src/types.cpp.o -c /home/llx/litearm-cpp/src/types.cpp",
+  "file": "/home/llx/litearm-cpp/src/types.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -Wall -Wextra -Wpedantic -std=gnu++17 -o CMakeFiles/litearm.dir/src/codec.cpp.o -c /home/llx/litearm-cpp/src/codec.cpp",
+  "file": "/home/llx/litearm-cpp/src/codec.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -Wall -Wextra -Wpedantic -std=gnu++17 -o CMakeFiles/litearm.dir/src/transport.cpp.o -c /home/llx/litearm-cpp/src/transport.cpp",
+  "file": "/home/llx/litearm-cpp/src/transport.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -Wall -Wextra -Wpedantic -std=gnu++17 -o CMakeFiles/litearm.dir/src/arm.cpp.o -c /home/llx/litearm-cpp/src/arm.cpp",
+  "file": "/home/llx/litearm-cpp/src/arm.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -Wall -Wextra -Wpedantic -std=gnu++17 -o CMakeFiles/litearm.dir/generated/litearm.pb.cc.o -c /home/llx/litearm-cpp/generated/litearm.pb.cc",
+  "file": "/home/llx/litearm-cpp/generated/litearm.pb.cc"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -DGTEST_HAS_PTHREAD=1 -std=gnu++17 -o CMakeFiles/test_protocol.dir/tests/test_protocol.cpp.o -c /home/llx/litearm-cpp/tests/test_protocol.cpp",
+  "file": "/home/llx/litearm-cpp/tests/test_protocol.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -DGTEST_HAS_PTHREAD=1 -std=gnu++17 -o CMakeFiles/test_codec.dir/tests/test_codec.cpp.o -c /home/llx/litearm-cpp/tests/test_codec.cpp",
+  "file": "/home/llx/litearm-cpp/tests/test_codec.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -DGTEST_HAS_PTHREAD=1 -std=gnu++17 -o CMakeFiles/test_transport.dir/tests/test_transport.cpp.o -c /home/llx/litearm-cpp/tests/test_transport.cpp",
+  "file": "/home/llx/litearm-cpp/tests/test_transport.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build",
+  "command": "/usr/bin/c++  -I/home/llx/litearm-cpp/include -I/home/llx/miniconda3/envs/unitree_sim_env/include -I/home/llx/litearm-cpp/generated -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -DGTEST_HAS_PTHREAD=1 -std=gnu++17 -o CMakeFiles/test_arm.dir/tests/test_arm.cpp.o -c /home/llx/litearm-cpp/tests/test_arm.cpp",
+  "file": "/home/llx/litearm-cpp/tests/test_arm.cpp"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build/_deps/googletest-build/googlemock",
+  "command": "/usr/bin/c++  -I/usr/src/googletest/googlemock/include -I/usr/src/googletest/googlemock -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -Wall -Wshadow -Wno-error=dangling-else -DGTEST_HAS_PTHREAD=1 -fexceptions -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -DGTEST_HAS_PTHREAD=1 -std=c++17 -o CMakeFiles/gmock.dir/src/gmock-all.cc.o -c /usr/src/googletest/googlemock/src/gmock-all.cc",
+  "file": "/usr/src/googletest/googlemock/src/gmock-all.cc"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build/_deps/googletest-build/googlemock",
+  "command": "/usr/bin/c++  -isystem /usr/src/googletest/googlemock/include -isystem /usr/src/googletest/googlemock -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -Wall -Wshadow -Wno-error=dangling-else -DGTEST_HAS_PTHREAD=1 -fexceptions -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -DGTEST_HAS_PTHREAD=1 -std=c++17 -o CMakeFiles/gmock_main.dir/src/gmock_main.cc.o -c /usr/src/googletest/googlemock/src/gmock_main.cc",
+  "file": "/usr/src/googletest/googlemock/src/gmock_main.cc"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build/_deps/googletest-build/googletest",
+  "command": "/usr/bin/c++  -I/usr/src/googletest/googletest/include -I/usr/src/googletest/googletest -Wall -Wshadow -Wno-error=dangling-else -DGTEST_HAS_PTHREAD=1 -fexceptions -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -std=c++17 -o CMakeFiles/gtest.dir/src/gtest-all.cc.o -c /usr/src/googletest/googletest/src/gtest-all.cc",
+  "file": "/usr/src/googletest/googletest/src/gtest-all.cc"
+},
+{
+  "directory": "/home/llx/litearm-cpp/build/_deps/googletest-build/googletest",
+  "command": "/usr/bin/c++  -isystem /usr/src/googletest/googletest/include -isystem /usr/src/googletest/googletest -Wall -Wshadow -Wno-error=dangling-else -DGTEST_HAS_PTHREAD=1 -fexceptions -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -DGTEST_HAS_PTHREAD=1 -std=c++17 -o CMakeFiles/gtest_main.dir/src/gtest_main.cc.o -c /usr/src/googletest/googletest/src/gtest_main.cc",
+  "file": "/usr/src/googletest/googletest/src/gtest_main.cc"
+}
+]

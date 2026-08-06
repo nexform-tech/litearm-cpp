@@ -1,0 +1,3 @@
+# Hashes of file build rules.
+4e288bb73994cd600cf3f36424714a60 ../generated/litearm.pb.cc
+58e9de1952b1a780c1846de203e76d25 CMakeFiles/proto_gen

@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package litearm_proto;
+
+// 协议版本：通过字段增减实现兼容性
+// 所有消息隐式携带版本信息（通过字段编号）
+
+// ============================================================================
+// 通用类型
+// ============================================================================
+
+// 通用值类型（支持任意参数）
+message Value {
+  oneof value {
+    double double_val = 1;
+    int64 int_val = 2;
+    string string_val = 3;
+    bool bool_val = 4;
+    bytes bytes_val = 5;
+    ListValue list_val = 6;
+    MapValue map_val = 7;
+    NoneValue none_val = 8;
+  }
+}
+
+message NoneValue {}
+
+message ListValue {
+  repeated Value values = 1;
+}
+
+message MapValue {
+  map<string, Value> values = 1;
+}
+
+// ============================================================================
+// RPC 消息
+// ============================================================================
+
+// RPC 请求
+message RpcRequest {
+  string method = 1;                    // 方法名（如 "movej", "fk"）
+  map<string, Value> kwargs = 2;        // 参数（方法特定的键值对）
+}
+
+// RPC 响应
+message RpcReply {
+  bool ok = 1;                          // 是否成功
+  Value result = 2;                     // 成功时的返回值
+  Error error = 3;                      // 失败时的错误信息
+}
+
+// 错误信息
+message Error {
+  string type = 1;                      // 异常类型名（如 "SafetyViolationError"）
+  string message = 2;                   // 异常消息
+  map<string, Value> details = 3;       // 额外详情（如 SafetyViolationError.details）
+}
+
+// ============================================================================
+// 状态广播
+// ============================================================================
+
+// 机器人状态（~50Hz 广播）
+message RobotState {
+  repeated double q = 1;                // 关节角 rad [7]
+  repeated double dq = 2;               // 关节速度 rad/s [7]
+  repeated double tau = 3;              // 关节力矩 Nm [7]
+  repeated Fault fault = 4;             // 故障列表
+  repeated int32 errs = 5;              // 原始状态码 [7]
+  repeated Temperature temps = 6;       // 温度 [7]
+  string state = 7;                     // ArmState 枚举值
+  FeedbackState feedback = 8;           // 反馈状态
+  WatchdogState watchdog = 9;           // 看门狗状态
+  string robot_serial = 10;             // 机器人序列号
+  string config_checksum_sha256 = 11;   // 配置校验和
+}
+
+// 故障信息
+message Fault {
+  int32 joint = 1;                      // 关节编号
+  int32 err_code = 2;                   // 错误码
+}
+
+// 温度信息
+message Temperature {
+  int32 mos_temp = 1;                   // MOS 温度 °C
+  int32 coil_temp = 2;                  // 线圈温度 °C
+}
+
+// 反馈状态
+message FeedbackState {
+  double max_age_s = 1;                 // 最大反馈年龄 s
+  repeated JointFeedbackState joints = 2;  // 各关节反馈
+  repeated int32 stale_joints = 3;      // 过时关节列表
+}
+
+// 单关节反馈状态
+message JointFeedbackState {
+  int32 joint = 1;                      // 关节编号
+  int32 received = 2;                   // 接收计数
+  double age_s = 3;                     // 反馈年龄 s
+  bool fresh = 4;                       // 是否新鲜
+}
+
+// 看门狗状态
+message WatchdogState {
+  bool enabled = 1;                     // 是否启用
+  double timeout_s = 2;                 // 超时时间 s
+  string mode = 3;                      // 模式
+  bool tripped = 4;                     // 是否触发
+  double last_kick_age_s = 5;           // 上次重置年龄 s
+}
+
+// ============================================================================
+// 控制命令
+// ============================================================================
+
+// 急停
+message Estop {
+  bool trigger = 1;                     // 触发急停
+}
+
+// 遥操作命令（用于 servo/joint_follow）
+message Command {
+  oneof command {
+    JointCommand joint = 1;             // 关节命令
+    PoseCommand pose = 2;               // 位姿命令
+  }
+}
+
+// 关节命令
+message JointCommand {
+  repeated double q = 1;                // 目标关节角 [7]
+  repeated double dq = 2;               // 目标关节速度 [7]（可选）
+}
+
+// 位姿命令
+message PoseCommand {
+  repeated double pos = 1;              // 目标位置 [3]
+  repeated double R = 2;                // 目标旋转矩阵 [9]（3x3 展平，行优先）
+}

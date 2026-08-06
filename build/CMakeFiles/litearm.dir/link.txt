@@ -1,0 +1,2 @@
+/usr/bin/ar qc liblitearm.a CMakeFiles/litearm.dir/src/exceptions.cpp.o CMakeFiles/litearm.dir/src/types.cpp.o CMakeFiles/litearm.dir/src/codec.cpp.o CMakeFiles/litearm.dir/src/transport.cpp.o CMakeFiles/litearm.dir/src/arm.cpp.o CMakeFiles/litearm.dir/generated/litearm.pb.cc.o
+/usr/bin/ranlib liblitearm.a
