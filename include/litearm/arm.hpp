@@ -7,12 +7,14 @@
  * No pylitearm dependency, no Pinocchio, no Eigen.
  */
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
+#include "litearm/device.hpp"
 #include "litearm/transport.hpp"
 #include "litearm/types.hpp"
 
@@ -81,7 +83,15 @@ public:
     bool movej(const std::vector<double>& q_target,
                double speed = 1.0,
                double settle_s = 1.0,
-               std::optional<int> max_cycles = std::nullopt);
+               std::optional<int> max_cycles = std::nullopt,
+               bool allow_start_collision_recovery = false);
+
+    /// Slowly return every out-of-limit joint to the nearest safe boundary.
+    /// Requires server connected with allow_limit_recovery=True.
+    bool recover_joint_limits(double speed = 0.05,
+                              double settle_s = 0.5,
+                              std::optional<int> max_cycles = std::nullopt,
+                              double inset_rad = 0.0);
 
     /// Move in a straight Cartesian line.
     bool movel(const LiteArmValue& pose_goal,
@@ -111,18 +121,50 @@ public:
                            std::optional<int> max_cycles = std::nullopt);
 
     /// Replay a JointTrajectory or path.
+    /// check_singularity: treat singular Jacobian as a hard error (server-side default).
     bool replay_trajectory(const JointTrajectory& traj,
                            double speed = 1.0,
                            bool goto_start = true,
                            double goto_speed = 0.3,
-                           std::optional<int> max_cycles = std::nullopt);
+                           std::optional<int> max_cycles = std::nullopt,
+                           bool check_singularity = true);
 
     /// Replay from raw value (dict-like).
     bool replay_trajectory(const LiteArmValue& traj_q,
                            double speed = 1.0,
                            bool goto_start = true,
                            double goto_speed = 0.3,
-                           std::optional<int> max_cycles = std::nullopt);
+                           std::optional<int> max_cycles = std::nullopt,
+                           bool check_singularity = true);
+
+    /// Replay a measured trajectory on its recorded time axis.
+    /// Safety-enforced: automatically stretches time to respect vel/acc/jerk limits.
+    bool replay_timed_trajectory(
+        const std::vector<std::vector<double>>& traj_q,
+        const std::vector<double>& traj_t,
+        double speed = 1.0,
+        bool goto_start = true,
+        double goto_speed = 0.3,
+        double simplify_tolerance_rad = 0.01,
+        std::optional<int> max_cycles = std::nullopt);
+
+    /// Load and replay a saved JointTrajectory (serialized for transport).
+    bool play_trajectory(const JointTrajectory& trajectory,
+                         double speed = 1.0,
+                         bool goto_start = true,
+                         double goto_speed = 0.3,
+                         bool verify_robot = true,
+                         double simplify_tolerance_rad = 0.01,
+                         std::optional<int> max_cycles = std::nullopt);
+
+    /// Load and replay a saved trajectory by server-side path (e.g. "trajectories/traj_001.json").
+    bool play_trajectory(const std::string& trajectory,
+                         double speed = 1.0,
+                         bool goto_start = true,
+                         double goto_speed = 0.3,
+                         bool verify_robot = true,
+                         double simplify_tolerance_rad = 0.01,
+                         std::optional<int> max_cycles = std::nullopt);
 
     /// Record a trajectory by dragging the arm (zero_gravity mode).
     JointTrajectory record_trajectory(
@@ -137,8 +179,12 @@ public:
               std::optional<int> max_cycles = std::nullopt);
 
     /// Enable zero-gravity (free-drag) mode.
+    /// measured_overspeed_factor / vel_max kept for server compatibility
+    /// (deprecated, no effect in pylitearm).
     bool zero_gravity(std::optional<int> max_cycles = std::nullopt,
-                      std::optional<double> duration_s = std::nullopt);
+                      std::optional<double> duration_s = std::nullopt,
+                      std::optional<double> measured_overspeed_factor = std::nullopt,
+                      std::optional<std::vector<double>> vel_max = std::nullopt);
 
     /// Joint-space impedance control.
     bool joint_impedance(const std::vector<double>& q_des,
@@ -155,7 +201,11 @@ public:
                              std::optional<LiteArmValue> v_des = std::nullopt,
                              std::optional<LiteArmValue> tau_max = std::nullopt,
                              double engage_sec = 0.3,
-                             std::optional<int> max_cycles = std::nullopt);
+                             std::optional<int> max_cycles = std::nullopt,
+                             std::optional<double> sigma_min_thresh = std::nullopt,
+                             std::optional<double> max_ori_err = std::nullopt,
+                             std::optional<double> measured_overspeed_factor = std::nullopt,
+                             std::optional<std::vector<double>> vel_max = std::nullopt);
 
     /// Follow an external target provider.
     bool joint_follow(std::optional<LiteArmValue> K = std::nullopt,
@@ -196,6 +246,12 @@ public:
     /// Clear motor faults. Returns list of cleared (motor_id, fault_code).
     LiteArmValue clear_faults();
 
+    /// Enable all motors and hold current pose (re-enable after disable()).
+    void enable();
+
+    /// Disable all motors (arm will drop under gravity!). CAN stays connected.
+    void disable();
+
     /// Set end-effector payload (mass + center of mass).
     LiteArmValue set_payload(double mass,
                              const std::vector<double>& com = {0.0, 0.0, 0.0});
@@ -210,6 +266,72 @@ public:
 
     /// Get current installation configuration.
     LiteArmValue get_installation();
+
+    // ── Peripheral devices ───────────────────────────────────────────────────
+
+    /// Get a remote device interface (hand/gripper/teach), e.g. "hand_0".
+    /// Methods are proxied through "device.{device_id}.{method}" RPCs.
+    RemoteDevice device(const std::string& device_id);
+
+    /// Access the lazy device manager (devices()["hand_0"] syntax).
+    DeviceManager& devices();
+
+    // ── Server extension RPCs (system / settings / trajectory / device / teleop) ──
+
+    /// Get system stats (CPU, memory, board temperature, uptime).
+    LiteArmValue get_system_stats();
+
+    /// Get server logs (paginated).
+    LiteArmValue get_logs(int page = 1, int size = 50,
+                          const std::string& search = "");
+
+    /// Request restart of the arm service.
+    LiteArmValue restart_service();
+
+    LiteArmValue get_joint_limits();
+    LiteArmValue set_joint_limits(const LiteArmValue& limits);
+
+    LiteArmValue get_zero_offsets();
+    LiteArmValue set_zero_offsets(const LiteArmValue& offsets);
+
+    LiteArmValue get_end_effector();
+    LiteArmValue set_end_effector(const LiteArmValue& config);
+
+    LiteArmValue get_cartesian_limits();
+    LiteArmValue set_cartesian_limits(const LiteArmValue& limits);
+
+    LiteArmValue get_collision_config();
+    LiteArmValue set_collision_config(const LiteArmValue& config);
+
+    /// Server-side recording / trajectory CRUD.
+    LiteArmValue start_recording();
+    LiteArmValue stop_recording();
+    LiteArmValue discard_recording();
+    LiteArmValue get_recording_state();
+    LiteArmValue get_playback_state();
+    LiteArmValue list_trajectories();
+    LiteArmValue save_trajectory(const std::string& id,
+                                 const std::string& name,
+                                 const std::vector<std::vector<double>>& points,
+                                 std::optional<double> duration = std::nullopt);
+    LiteArmValue delete_trajectory(const std::string& id);
+
+    /// On-demand device daemon management (server forks device_daemon).
+    LiteArmValue list_device_types();
+    LiteArmValue connect_device(const std::string& category,
+                                const std::string& subtype,
+                                const std::string& device_id = "end_0",
+                                const std::string& can_iface = "",
+                                const LiteArmValue& config = LiteArmValue(nullptr));
+    LiteArmValue disconnect_device(const std::string& device_id = "end_0");
+    LiteArmValue get_active_device(const std::string& device_id = "end_0");
+
+    /// Master/slave teleoperation (shares state with CLI --teleop-mode).
+    LiteArmValue enter_teleop(
+        const std::string& mode,
+        const std::map<std::string, LiteArmValue>& params = {});
+    LiteArmValue exit_teleop();
+    LiteArmValue get_teleop_status();
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -230,6 +352,7 @@ private:
     std::string estop_topic_;
     std::shared_ptr<Sub> state_sub_;
     std::optional<RobotState> last_state_;
+    std::shared_ptr<DeviceManager> devices_;  // lazy (created on first use)
 };
 
 } // namespace litearm

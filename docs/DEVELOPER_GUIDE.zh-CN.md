@@ -1,0 +1,215 @@
+# litearm-cpp 开发指南与接口说明
+
+`litearm-cpp` 是 LiteArm 机械臂的 C++ 客户端 SDK（C++17），
+通过网络连接机械臂控制服务，适合低延迟嵌入式场景。**纯客户端，无运动学/动力学依赖**。
+
+```text
+你的程序 ──→ 机械臂控制服务 ──→ 机械臂 / CAN
+```
+
+---
+
+## 1. 环境要求与构建
+
+| 项目 | 要求 |
+|---|---|
+| 编译器 | C++17（GCC 8+ / Clang 7+） |
+| CMake | 3.16+ |
+| Protobuf | 3.19+（headers、库、`protoc`） |
+| Google Test | 仅测试需要 |
+
+```bash
+mkdir build && cd build
+cmake .. -DPROTOBUF_ROOT=/path/to/protobuf   # 系统已安装 protobuf 时可省略该参数
+cmake --build . -j$(nproc)
+ctest --output-on-failure                     # 运行测试
+```
+
+## 2. 快速开始
+
+```cpp
+#include <litearm/arm.hpp>
+
+int main() {
+    auto arm = litearm::Arm("tcp/192.168.1.100:7447", "armA");
+
+    auto state = arm.get_state();                 // std::optional<RobotState>
+    if (state) {
+        auto& q = state->q;                        // 关节位置
+    }
+
+    arm.movej({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, /*speed=*/0.5);
+    auto [pos, rot] = arm.fk({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+
+    arm.request_stop();                            // 高优先级急停
+    arm.close();
+    return 0;
+}
+```
+
+## 3. 连接管理
+
+```cpp
+litearm::Arm arm("tcp/127.0.0.1:7447", "armA",
+                 /*transport=*/nullptr);   // 可选预配置连接（高级用途）
+arm.close();                               // 关闭连接
+```
+
+- `Arm` 不可拷贝、可移动；`arm_id()` 返回机械臂标识。
+- `get_state(refresh=false)` 同步读取状态缓存，未收到返回 `std::nullopt`。
+
+## 4. 值类型 LiteArmValue
+
+接口参数/返回值统一用动态值类型 `LiteArmValue`（tagged union），构造与访问：
+
+```cpp
+using litearm::LiteArmValue;
+
+LiteArmValue v = LiteArmValue::from_vec({0.1, 0.2});            // vector<double> → List
+LiteArmValue m = LiteArmValue::from_mat({{1,0,0},{0,1,0},{0,0,1}});  // 嵌套 → List<List>
+
+double x  = v.as_list()[0].as_double();        // 访问
+auto vec  = v.to_vec();                        // 提取 vector<double>
+auto mat  = m.to_mat();                        // 提取 vector<vector<double>>
+auto cfg  = LiteArmValue::make_map({{"type", LiteArmValue("gripper")}});
+```
+
+`Kind` 枚举：`Null / Bool / Int / Double / String / Bytes / List / Map`。便捷别名 `Vec7`、`Mat3x3`。
+
+## 5. 接口说明
+
+> 运动类方法返回 `bool`；纯计算返回数据；其他接口返回 `LiteArmValue`。
+
+### 5.1 计算（不驱动电机）
+
+| 方法 | 说明 |
+|---|---|
+| `fk(q)` | 正运动学 → `(位置, 旋转矩阵)` |
+| `ik(pos_d, R_d, q_seed=nullopt)` | 逆运动学 → `(q, 是否成功)` |
+| `plan_movel(q_start, pose_goal)` | 直线笛卡尔路径规划 → 关节路径 |
+| `plan_movec(q_start, pose_via, pose_goal)` | 圆弧路径规划（过中间点） |
+| `plan_movep(q_start, poses_goal)` | 多航点路径规划 |
+
+### 5.2 运动控制
+
+| 方法 | 说明 |
+|---|---|
+| `movej(q_target, speed=1.0, settle_s=1.0, max_cycles=nullopt, allow_start_collision_recovery=false)` | 关节空间点到点 |
+| `recover_joint_limits(speed=0.05, settle_s=0.5, max_cycles=nullopt, inset_rad=0.0)` | 越限关节缓慢回安全边界（需 server `allow_limit_recovery=True`） |
+| `movel(pose_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 笛卡尔直线 |
+| `movec(pose_via, pose_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 笛卡尔圆弧 |
+| `movep(poses_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 多航点带拐角平滑 |
+| `replay_joint_path(q_path, speed=1.0, settle_s=0.5, goto_start=true, goto_speed=0.3, max_cycles=nullopt)` | 回放关节序列 |
+| `replay_trajectory(traj, speed=1.0, goto_start=true, goto_speed=0.3, max_cycles=nullopt, check_singularity=true)` | 回放 `JointTrajectory`（另有 `LiteArmValue` 重载） |
+| `replay_timed_trajectory(traj_q, traj_t, speed=1.0, goto_start=true, goto_speed=0.3, simplify_tolerance_rad=0.01, max_cycles=nullopt)` | 按原始时间轴回放（自动拉伸保安全） |
+| `play_trajectory(trajectory, speed=1.0, goto_start=true, goto_speed=0.3, verify_robot=true, simplify_tolerance_rad=0.01, max_cycles=nullopt)` | 回放已保存轨迹（`JointTrajectory` 或 server 侧路径字符串，双载） |
+| `record_trajectory(output="trajectories", duration_s=nullopt, sample_rate_hz=100.0, filter_alpha=0.15, name=nullopt)` | 拖动录轨迹 → `JointTrajectory` |
+| `hold(kp_scale=3.0, max_cycles=nullopt)` | 提高刚度持位 |
+| `zero_gravity(max_cycles=nullopt, duration_s=nullopt, measured_overspeed_factor=nullopt, vel_max=nullopt)` | 零重力（自由拖动）模式 |
+| `joint_impedance(q_des, K, B, tau_max=nullopt, engage_sec=0.3, max_cycles=nullopt)` | 关节空间阻抗控制 |
+| `cartesian_impedance(q_des, K_cart, B_cart, v_des=nullopt, tau_max=nullopt, engage_sec=0.3, max_cycles=nullopt, sigma_min_thresh=nullopt, max_ori_err=nullopt, measured_overspeed_factor=nullopt, vel_max=nullopt)` | 笛卡尔空间阻抗控制 |
+| `joint_follow(K=nullopt, B=nullopt, speed_limit=nullopt, accel_limit=nullopt, engage_sec=0.3, max_cycles=nullopt, duration_s=nullopt)` | 跟随外部目标 |
+
+### 5.3 状态读取
+
+| 方法 | 说明 |
+|---|---|
+| `get_state(refresh=false)` | 状态缓存最近状态（`std::optional<RobotState>`，同步） |
+| `get_tcp_pose()` | 当前 TCP 位姿 → `(位置, 旋转矩阵)` |
+
+`RobotState` 字段：`q / dq / tau / faults / errs / temps / state / feedback / watchdog / robot_serial / config_checksum_sha256`。
+
+### 5.4 急停 / 使能
+
+| 方法 | 说明 |
+|---|---|
+| `request_stop()` | 高优先级急停（独立急停通道） |
+| `clear_stop()` | 清除停止状态回到就绪 |
+| `enable()` | 使能全部电机并锁住当前姿态 |
+| `disable()` | ⚠️ 失能全部电机（机械臂会掉臂！），CAN 保持连接 |
+
+### 5.5 参数调节
+
+| 方法 | 说明 |
+|---|---|
+| `set_gains(kp=nullopt, kd=nullopt)` / `get_gains()` | PD 增益设置/读取 |
+| `clear_faults()` | 清除电机故障 |
+| `set_payload(mass, com={0,0,0})` / `get_payload()` | 末端负载（质量 + 质心） |
+| `set_installation(base_rpy=nullopt, gravity=nullopt)` / `get_installation()` | 安装姿态（基座 RPY 或重力向量） |
+
+### 5.6 外设设备
+
+```cpp
+auto hand = arm.device("hand_0");          // RemoteDevice
+hand.open(); hand.close();                 // 开/合
+hand.set_force(0.5);                       // 抓取力
+hand.set_gesture("pinch"); hand.list_gestures();
+hand.finger_move({0.1, 0.2, 0.3, 0.4, 0.5, 0.6});
+hand.set_speed({...}); hand.set_torque({...});
+hand.get_state();
+
+auto gripper = arm.device("gripper_0");
+gripper.set_width(0.5); double w = gripper.get_width();
+
+auto teach = arm.device("teach_0");
+teach.get_joints(); teach.get_buttons();
+
+// 通用：get_status / get_info / connect / disconnect / clear_faults
+// 设备管理器：arm.devices()["hand_0"] 等价于 arm.device("hand_0")
+```
+
+`RemoteDevice::call(method, kwargs)` 可调用任意设备方法，自动加 `device.{id}.` 前缀。
+
+### 5.7 系统 / 设置 / 轨迹 / 设备管理 / 遥操（扩展接口）
+
+均返回 `LiteArmValue`：
+
+| 分组 | 方法 |
+|---|---|
+| 系统 | `get_system_stats()`、`get_logs(page=1, size=50, search="")`、`restart_service()` |
+| 设置 | `get_joint_limits/set_joint_limits(limits)`、`get_zero_offsets/set_zero_offsets(offsets)`、`get_end_effector/set_end_effector(config)`、`get_cartesian_limits/set_cartesian_limits(limits)`、`get_collision_config/set_collision_config(config)` |
+| 轨迹 | `start_recording/stop_recording/discard_recording/get_recording_state/get_playback_state/list_trajectories/save_trajectory(id,name,points,duration=nullopt)/delete_trajectory(id)` |
+| 设备 | `list_device_types()`、`connect_device(category, subtype, device_id="end_0", can_iface="", config={})`、`disconnect_device(device_id="end_0")`、`get_active_device(device_id="end_0")` |
+| 遥操 | `enter_teleop(mode, params={})`、`exit_teleop()`、`get_teleop_status()` |
+
+> 遥操态下服务端拒绝一切手动控制指令，只放行只读 / 急停 / `exit_teleop`。
+
+## 6. 异常处理
+
+所有异常继承 `LiteArmError`（`std::runtime_error` 子类），服务端异常原样抛出。
+
+```cpp
+#include <litearm/exceptions.hpp>
+
+try {
+    arm.movej(...);
+} catch (const litearm::SafetyViolationError& e) {   // 超时/跟随/故障/看门狗
+    // e.details 为 unordered_map<string,string>
+} catch (const litearm::LiteArmError& e) {           // 兜底
+    std::cerr << e.what();
+}
+```
+
+常用类型：`NotConnectedError`、`ConfigurationError`、`InvalidCommandError`、`CartesianPlanError`、
+`MotionTimeoutError`、`MotorFaultError`、`ArmFault`、`WatchdogError`、`MotionCancelled`。
+
+## 7. 安全提示
+
+- ⚠️ `disable()` 会使机械臂在重力作用下坠落，务必确认安全。
+- `request_stop()` 为高优先级急停，应绑定到独立物理急停通道。
+- 遥操态下不会执行手动控制指令。
+- `recover_joint_limits` 仅在 server 以 `allow_limit_recovery=True` 启动时可用。
+
+## 8. 与 litearm-python 对比
+
+| 方面 | litearm-python | litearm-cpp |
+|---|---|---|
+| 值类型 | 原生 `dict`/`list` | `LiteArmValue`（tagged union） |
+| 依赖 | 自动安装 | protobuf（gtest 仅测试） |
+| 适用 | 快速原型 / 脚本 | 低延迟嵌入式 / 实时系统 |
+
+三个版本接口方法一一对应，代码可跨语言迁移。
+
+## License
+
+Proprietary

@@ -309,6 +309,24 @@ TEST(ArmStop, ClearStop) {
     mock.arm.clear_stop();
 }
 
+TEST(ArmStop, Enable) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>&) {
+        EXPECT_EQ(method, "enable");
+        return LiteArmValue(nullptr);
+    });
+
+    mock.arm.enable();
+}
+
+TEST(ArmStop, Disable) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>&) {
+        EXPECT_EQ(method, "disable");
+        return LiteArmValue(nullptr);
+    });
+
+    mock.arm.disable();
+}
+
 // ── Get state ───────────────────────────────────────────────────────────────
 
 TEST(ArmState, NoBroadcastReturnsNullopt) {
@@ -512,6 +530,247 @@ TEST(ArmLifecycle, CloseIsIdempotent) {
     });
     mock.arm.close();
     mock.arm.close();  // Should not crash
+}
+
+// ── Unified params ──────────────────────────────────────────────────────────
+
+TEST(ArmParams, MovejCollisionRecovery) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "movej");
+        EXPECT_TRUE(kwargs.at("allow_start_collision_recovery").as_bool());
+        return LiteArmValue(true);
+    });
+
+    EXPECT_TRUE(mock.arm.movej({0,0,0,0,0,0,0}, 1.0, 1.0, 100, true));
+}
+
+TEST(ArmParams, ZeroGravityNewParams) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "zero_gravity");
+        EXPECT_DOUBLE_EQ(kwargs.at("measured_overspeed_factor").as_double(), 1.5);
+        auto vel_max = kwargs.at("vel_max").to_vec();
+        EXPECT_EQ(vel_max.size(), 7u);
+        if (vel_max.size() == 7u) {
+            EXPECT_DOUBLE_EQ(vel_max[0], 0.5);
+        }
+        return LiteArmValue(true);
+    });
+
+    EXPECT_TRUE(mock.arm.zero_gravity(std::nullopt, std::nullopt, 1.5,
+                                      std::vector<double>{0.5,0.5,0.5,0.5,0.5,0.5,0.5}));
+}
+
+TEST(ArmParams, CartesianImpedanceNewParams) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "cartesian_impedance");
+        EXPECT_DOUBLE_EQ(kwargs.at("sigma_min_thresh").as_double(), 0.01);
+        EXPECT_DOUBLE_EQ(kwargs.at("max_ori_err").as_double(), 0.2);
+        EXPECT_DOUBLE_EQ(kwargs.at("measured_overspeed_factor").as_double(), 1.5);
+        auto vel_max = kwargs.at("vel_max").to_vec();
+        EXPECT_EQ(vel_max.size(), 6u);
+        return LiteArmValue(true);
+    });
+
+    EXPECT_TRUE(mock.arm.cartesian_impedance(
+        {0,0,0,0,0,0,0},
+        LiteArmValue::from_vec({100,100,100,100,100,100}),
+        LiteArmValue::from_vec({10,10,10,10,10,10}),
+        std::nullopt, std::nullopt, 0.3, std::nullopt,
+        0.01, 0.2, 1.5,
+        std::vector<double>{1,1,1,1,1,1}));
+}
+
+TEST(ArmParams, RecoverJointLimits) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "recover_joint_limits");
+        EXPECT_DOUBLE_EQ(kwargs.at("speed").as_double(), 0.05);
+        EXPECT_DOUBLE_EQ(kwargs.at("settle_s").as_double(), 0.5);
+        EXPECT_DOUBLE_EQ(kwargs.at("inset_rad").as_double(), 0.1);
+        return LiteArmValue(true);
+    });
+
+    EXPECT_TRUE(mock.arm.recover_joint_limits(0.05, 0.5, std::nullopt, 0.1));
+}
+
+TEST(ArmMotion, ReplayTimedTrajectory) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "replay_timed_trajectory");
+        auto traj_q = kwargs.at("traj_q").to_mat();
+        EXPECT_EQ(traj_q.size(), 2u);
+        if (traj_q.size() == 2u) {
+            EXPECT_EQ(traj_q[0].size(), 7u);
+        }
+        auto traj_t = kwargs.at("traj_t").to_vec();
+        EXPECT_EQ(traj_t.size(), 2u);
+        EXPECT_DOUBLE_EQ(kwargs.at("simplify_tolerance_rad").as_double(), 0.01);
+        return LiteArmValue(true);
+    });
+
+    std::vector<std::vector<double>> traj_q = {
+        {0,0,0,0,0,0,0},
+        {0.1,0.1,0.1,0.1,0.1,0.1,0.1},
+    };
+    EXPECT_TRUE(mock.arm.replay_timed_trajectory(traj_q, {0.0, 1.0}));
+}
+
+TEST(ArmMotion, PlayTrajectoryString) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "play_trajectory");
+        EXPECT_EQ(kwargs.at("trajectory").as_string(), "trajectories/traj_001.json");
+        EXPECT_TRUE(kwargs.at("verify_robot").as_bool());
+        return LiteArmValue(true);
+    });
+
+    EXPECT_TRUE(mock.arm.play_trajectory("trajectories/traj_001.json"));
+}
+
+// ── Server extension RPCs ────────────────────────────────────────────────────
+
+namespace {
+
+LiteArmValue ok_map() {
+    LiteArmValue::MapType m;
+    m["ok"] = LiteArmValue(true);
+    return LiteArmValue(std::move(m));
+}
+
+} // namespace
+
+TEST(ArmExtension, GetSystemStats) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>&) {
+        EXPECT_EQ(method, "get_system_stats");
+        LiteArmValue::MapType m;
+        m["cpu_percent"] = LiteArmValue(12.3);
+        m["uptime_seconds"] = LiteArmValue(int64_t(42));
+        return LiteArmValue(std::move(m));
+    });
+
+    auto result = mock.arm.get_system_stats();
+    EXPECT_DOUBLE_EQ(result.as_map().at("cpu_percent").as_double(), 12.3);
+}
+
+TEST(ArmExtension, GetLogs) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        EXPECT_EQ(method, "get_logs");
+        EXPECT_EQ(kwargs.at("page").as_int(), 2);
+        EXPECT_EQ(kwargs.at("size").as_int(), 10);
+        EXPECT_EQ(kwargs.at("search").as_string(), "movej");
+        return ok_map();
+    });
+
+    auto result = mock.arm.get_logs(2, 10, "movej");
+    EXPECT_TRUE(result.as_map().at("ok").as_bool());
+}
+
+TEST(ArmExtension, RestartService) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>&) {
+        EXPECT_EQ(method, "restart_service");
+        return ok_map();
+    });
+
+    EXPECT_TRUE(mock.arm.restart_service().as_map().at("ok").as_bool());
+}
+
+TEST(ArmExtension, SettingsRoundtrip) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        if (method == "get_joint_limits" || method == "get_zero_offsets" ||
+            method == "get_end_effector" || method == "get_cartesian_limits" ||
+            method == "get_collision_config") {
+            return LiteArmValue(LiteArmValue::MapType{});
+        }
+        // set_* methods echo the payload back
+        if (kwargs.count("limits")) return kwargs.at("limits");
+        if (kwargs.count("offsets")) return kwargs.at("offsets");
+        if (kwargs.count("config")) return kwargs.at("config");
+        return ok_map();
+    });
+
+    EXPECT_TRUE(mock.arm.get_joint_limits().is_map());
+    LiteArmValue::MapType limits;
+    limits["q_max"] = LiteArmValue::from_vec({3.0,3.0,3.0,3.0,3.0,3.0,3.0});
+    auto echoed = mock.arm.set_joint_limits(LiteArmValue(limits));
+    EXPECT_DOUBLE_EQ(echoed.as_map().at("q_max").to_vec()[0], 3.0);
+
+    EXPECT_TRUE(mock.arm.set_zero_offsets(ok_map()).is_map());
+    EXPECT_TRUE(mock.arm.set_end_effector(ok_map()).is_map());
+    EXPECT_TRUE(mock.arm.set_cartesian_limits(ok_map()).is_map());
+    EXPECT_TRUE(mock.arm.set_collision_config(ok_map()).is_map());
+}
+
+TEST(ArmExtension, TrajectoryCrud) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        if (method == "list_trajectories") {
+            LiteArmValue::MapType m;
+            m["total"] = LiteArmValue(int64_t(1));
+            return LiteArmValue(std::move(m));
+        }
+        if (method == "save_trajectory") {
+            EXPECT_EQ(kwargs.at("id").as_string(), "t1");
+            EXPECT_EQ(kwargs.at("name").as_string(), "demo");
+            EXPECT_EQ(kwargs.at("points").to_mat().size(), 2u);
+            return ok_map();
+        }
+        if (method == "delete_trajectory") {
+            EXPECT_EQ(kwargs.at("id").as_string(), "t1");
+            return ok_map();
+        }
+        return ok_map();
+    });
+
+    EXPECT_TRUE(mock.arm.start_recording().is_map());
+    EXPECT_TRUE(mock.arm.stop_recording().is_map());
+    EXPECT_TRUE(mock.arm.discard_recording().is_map());
+    EXPECT_TRUE(mock.arm.get_recording_state().is_map());
+    EXPECT_TRUE(mock.arm.get_playback_state().is_map());
+    EXPECT_EQ(mock.arm.list_trajectories().as_map().at("total").as_int(), 1);
+
+    std::vector<std::vector<double>> points = {
+        {0,0,0,0,0,0,0},
+        {0.1,0.1,0.1,0.1,0.1,0.1,0.1},
+    };
+    EXPECT_TRUE(mock.arm.save_trajectory("t1", "demo", points).as_map().at("ok").as_bool());
+    EXPECT_TRUE(mock.arm.delete_trajectory("t1").as_map().at("ok").as_bool());
+}
+
+TEST(ArmExtension, DeviceControl) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        if (method == "list_device_types") {
+            return LiteArmValue(LiteArmValue::ListType{});
+        }
+        if (method == "connect_device") {
+            EXPECT_EQ(kwargs.at("category").as_string(), "hand");
+            EXPECT_EQ(kwargs.at("subtype").as_string(), "lite6_hand");
+            EXPECT_EQ(kwargs.at("device_id").as_string(), "end_0");
+            return ok_map();
+        }
+        if (method == "disconnect_device" || method == "get_active_device") {
+            EXPECT_EQ(kwargs.at("device_id").as_string(), "end_0");
+            return ok_map();
+        }
+        return ok_map();
+    });
+
+    EXPECT_TRUE(mock.arm.list_device_types().is_list());
+    EXPECT_TRUE(mock.arm.connect_device("hand", "lite6_hand").as_map().at("ok").as_bool());
+    EXPECT_TRUE(mock.arm.disconnect_device().as_map().at("ok").as_bool());
+    EXPECT_TRUE(mock.arm.get_active_device().as_map().at("ok").as_bool());
+}
+
+TEST(ArmExtension, Teleop) {
+    auto mock = make_mock_arm("armA", [](const std::string& method, const std::map<std::string, LiteArmValue>& kwargs) {
+        if (method == "enter_teleop") {
+            EXPECT_EQ(kwargs.at("mode").as_string(), "slave");
+            EXPECT_EQ(kwargs.at("peer").as_string(), "tcp/10.0.0.1:7447");
+            return ok_map();
+        }
+        return ok_map();
+    });
+
+    std::map<std::string, LiteArmValue> params;
+    params["peer"] = LiteArmValue(std::string("tcp/10.0.0.1:7447"));
+    EXPECT_TRUE(mock.arm.enter_teleop("slave", params).as_map().at("ok").as_bool());
+    EXPECT_TRUE(mock.arm.exit_teleop().is_map());
+    EXPECT_TRUE(mock.arm.get_teleop_status().is_map());
 }
 
 } // namespace

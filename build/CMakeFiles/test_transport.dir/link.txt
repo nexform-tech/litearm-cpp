@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/test_transport.dir/tests/test_transport.cpp.o -o test_transport  -Wl,-rpath,/home/llx/miniconda3/envs/unitree_sim_env/lib liblitearm.a lib/libgtest.a lib/libgtest_main.a /home/llx/miniconda3/envs/unitree_sim_env/lib/libprotobuf.so lib/libgtest.a 

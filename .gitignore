@@ -1,0 +1,10 @@
+# Build artifacts
+build/
+generated/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

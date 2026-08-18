@@ -20,6 +20,15 @@
 
 namespace litearm {
 
+// state 广播 50Hz × 最长 query timeout 300s = 15000 条消息。设 20000 留余量。
+// 不足时旧消息被环形丢弃。InProcTransport 与未来 ZenohTransport 共用此常量。
+inline constexpr size_t kDefaultFifoDepth = 20000;
+
+// RPC 默认超时（秒）= 5 分钟。zenoh 默认仅约 10s，运动方法（movej/movel/...）
+// 可能跑几十秒甚至更久。InProcTransport 的 query() 是同步直接调用（不需 timeout），
+// 此常量预留给未来的 ZenohTransport。
+inline constexpr double kDefaultQueryTimeoutS = 300.0;
+
 // ── Abstract base classes ───────────────────────────────────────────────────
 
 /// Subscription handle: FIFO, try_recv() non-blocking, drain_latest().
@@ -62,7 +71,7 @@ public:
 /// In-process pub/sub + query/reply. Zero-dependency, for testing.
 class InProcTransport : public Transport {
 public:
-    explicit InProcTransport(size_t fifo_depth = 16);
+    explicit InProcTransport(size_t fifo_depth = kDefaultFifoDepth);
     ~InProcTransport() override;
 
     void pub(const std::string& topic, const std::string& payload) override;

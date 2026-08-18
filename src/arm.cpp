@@ -106,7 +106,8 @@ Arm::plan_movep(const std::vector<double>& q_start,
 
 bool Arm::movej(const std::vector<double>& q_target,
                 double speed, double settle_s,
-                std::optional<int> max_cycles)
+                std::optional<int> max_cycles,
+                bool allow_start_collision_recovery)
 {
     std::map<std::string, LiteArmValue> kwargs;
     kwargs["q_target"] = LiteArmValue::from_vec(q_target);
@@ -115,8 +116,24 @@ bool Arm::movej(const std::vector<double>& q_target,
     kwargs["max_cycles"] = max_cycles
         ? LiteArmValue(static_cast<int64_t>(*max_cycles))
         : LiteArmValue(nullptr);
+    kwargs["allow_start_collision_recovery"] = LiteArmValue(allow_start_collision_recovery);
 
     return rpc("movej", std::move(kwargs)).as_bool();
+}
+
+bool Arm::recover_joint_limits(double speed, double settle_s,
+                               std::optional<int> max_cycles,
+                               double inset_rad)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["speed"] = LiteArmValue(speed);
+    kwargs["settle_s"] = LiteArmValue(settle_s);
+    kwargs["max_cycles"] = max_cycles
+        ? LiteArmValue(static_cast<int64_t>(*max_cycles))
+        : LiteArmValue(nullptr);
+    kwargs["inset_rad"] = LiteArmValue(inset_rad);
+
+    return rpc("recover_joint_limits", std::move(kwargs)).as_bool();
 }
 
 bool Arm::movel(const LiteArmValue& pose_goal,
@@ -187,16 +204,18 @@ bool Arm::replay_joint_path(const std::vector<std::vector<double>>& q_path,
 bool Arm::replay_trajectory(const JointTrajectory& traj,
                             double speed, bool goto_start,
                             double goto_speed,
-                            std::optional<int> max_cycles)
+                            std::optional<int> max_cycles,
+                            bool check_singularity)
 {
     return replay_trajectory(traj.to_value(), speed, goto_start,
-                             goto_speed, max_cycles);
+                             goto_speed, max_cycles, check_singularity);
 }
 
 bool Arm::replay_trajectory(const LiteArmValue& traj_q,
                             double speed, bool goto_start,
                             double goto_speed,
-                            std::optional<int> max_cycles)
+                            std::optional<int> max_cycles,
+                            bool check_singularity)
 {
     std::map<std::string, LiteArmValue> kwargs;
     kwargs["traj_q"] = traj_q;
@@ -206,8 +225,69 @@ bool Arm::replay_trajectory(const LiteArmValue& traj_q,
     kwargs["max_cycles"] = max_cycles
         ? LiteArmValue(static_cast<int64_t>(*max_cycles))
         : LiteArmValue(nullptr);
+    kwargs["check_singularity"] = LiteArmValue(check_singularity);
 
     return rpc("replay_trajectory", std::move(kwargs)).as_bool();
+}
+
+bool Arm::replay_timed_trajectory(
+    const std::vector<std::vector<double>>& traj_q,
+    const std::vector<double>& traj_t,
+    double speed, bool goto_start, double goto_speed,
+    double simplify_tolerance_rad, std::optional<int> max_cycles)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["traj_q"] = LiteArmValue::from_mat(traj_q);
+    kwargs["traj_t"] = LiteArmValue::from_vec(traj_t);
+    kwargs["speed"] = LiteArmValue(speed);
+    kwargs["goto_start"] = LiteArmValue(goto_start);
+    kwargs["goto_speed"] = LiteArmValue(goto_speed);
+    kwargs["simplify_tolerance_rad"] = LiteArmValue(simplify_tolerance_rad);
+    kwargs["max_cycles"] = max_cycles
+        ? LiteArmValue(static_cast<int64_t>(*max_cycles))
+        : LiteArmValue(nullptr);
+
+    return rpc("replay_timed_trajectory", std::move(kwargs)).as_bool();
+}
+
+bool Arm::play_trajectory(const JointTrajectory& trajectory,
+                          double speed, bool goto_start,
+                          double goto_speed, bool verify_robot,
+                          double simplify_tolerance_rad,
+                          std::optional<int> max_cycles)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["trajectory"] = trajectory.to_value();
+    kwargs["speed"] = LiteArmValue(speed);
+    kwargs["goto_start"] = LiteArmValue(goto_start);
+    kwargs["goto_speed"] = LiteArmValue(goto_speed);
+    kwargs["verify_robot"] = LiteArmValue(verify_robot);
+    kwargs["simplify_tolerance_rad"] = LiteArmValue(simplify_tolerance_rad);
+    kwargs["max_cycles"] = max_cycles
+        ? LiteArmValue(static_cast<int64_t>(*max_cycles))
+        : LiteArmValue(nullptr);
+
+    return rpc("play_trajectory", std::move(kwargs)).as_bool();
+}
+
+bool Arm::play_trajectory(const std::string& trajectory,
+                          double speed, bool goto_start,
+                          double goto_speed, bool verify_robot,
+                          double simplify_tolerance_rad,
+                          std::optional<int> max_cycles)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["trajectory"] = LiteArmValue(trajectory);
+    kwargs["speed"] = LiteArmValue(speed);
+    kwargs["goto_start"] = LiteArmValue(goto_start);
+    kwargs["goto_speed"] = LiteArmValue(goto_speed);
+    kwargs["verify_robot"] = LiteArmValue(verify_robot);
+    kwargs["simplify_tolerance_rad"] = LiteArmValue(simplify_tolerance_rad);
+    kwargs["max_cycles"] = max_cycles
+        ? LiteArmValue(static_cast<int64_t>(*max_cycles))
+        : LiteArmValue(nullptr);
+
+    return rpc("play_trajectory", std::move(kwargs)).as_bool();
 }
 
 JointTrajectory Arm::record_trajectory(
@@ -243,7 +323,9 @@ bool Arm::hold(double kp_scale, std::optional<int> max_cycles) {
 }
 
 bool Arm::zero_gravity(std::optional<int> max_cycles,
-                       std::optional<double> duration_s)
+                       std::optional<double> duration_s,
+                       std::optional<double> measured_overspeed_factor,
+                       std::optional<std::vector<double>> vel_max)
 {
     std::map<std::string, LiteArmValue> kwargs;
     kwargs["max_cycles"] = max_cycles
@@ -251,6 +333,12 @@ bool Arm::zero_gravity(std::optional<int> max_cycles,
         : LiteArmValue(nullptr);
     kwargs["duration_s"] = duration_s
         ? LiteArmValue(*duration_s)
+        : LiteArmValue(nullptr);
+    kwargs["measured_overspeed_factor"] = measured_overspeed_factor
+        ? LiteArmValue(*measured_overspeed_factor)
+        : LiteArmValue(nullptr);
+    kwargs["vel_max"] = vel_max
+        ? LiteArmValue::from_vec(*vel_max)
         : LiteArmValue(nullptr);
 
     return rpc("zero_gravity", std::move(kwargs)).as_bool();
@@ -282,7 +370,11 @@ bool Arm::cartesian_impedance(const std::vector<double>& q_des,
                               std::optional<LiteArmValue> v_des,
                               std::optional<LiteArmValue> tau_max,
                               double engage_sec,
-                              std::optional<int> max_cycles)
+                              std::optional<int> max_cycles,
+                              std::optional<double> sigma_min_thresh,
+                              std::optional<double> max_ori_err,
+                              std::optional<double> measured_overspeed_factor,
+                              std::optional<std::vector<double>> vel_max)
 {
     std::map<std::string, LiteArmValue> kwargs;
     kwargs["q_des"] = LiteArmValue::from_vec(q_des);
@@ -293,6 +385,18 @@ bool Arm::cartesian_impedance(const std::vector<double>& q_des,
     kwargs["engage_sec"] = LiteArmValue(engage_sec);
     kwargs["max_cycles"] = max_cycles
         ? LiteArmValue(static_cast<int64_t>(*max_cycles))
+        : LiteArmValue(nullptr);
+    kwargs["sigma_min_thresh"] = sigma_min_thresh
+        ? LiteArmValue(*sigma_min_thresh)
+        : LiteArmValue(nullptr);
+    kwargs["max_ori_err"] = max_ori_err
+        ? LiteArmValue(*max_ori_err)
+        : LiteArmValue(nullptr);
+    kwargs["measured_overspeed_factor"] = measured_overspeed_factor
+        ? LiteArmValue(*measured_overspeed_factor)
+        : LiteArmValue(nullptr);
+    kwargs["vel_max"] = vel_max
+        ? LiteArmValue::from_vec(*vel_max)
         : LiteArmValue(nullptr);
 
     return rpc("cartesian_impedance", std::move(kwargs)).as_bool();
@@ -368,6 +472,14 @@ LiteArmValue Arm::clear_faults() {
     return rpc("clear_faults");
 }
 
+void Arm::enable() {
+    rpc("enable");
+}
+
+void Arm::disable() {
+    rpc("disable");
+}
+
 LiteArmValue Arm::set_payload(double mass, const std::vector<double>& com) {
     return rpc("set_payload", {
         {"mass", LiteArmValue(mass)},
@@ -395,6 +507,176 @@ LiteArmValue Arm::set_installation(
 
 LiteArmValue Arm::get_installation() {
     return rpc("get_installation");
+}
+
+// ── Peripheral devices ───────────────────────────────────────────────────────
+
+RemoteDevice Arm::device(const std::string& device_id) {
+    if (!devices_) {
+        devices_ = std::make_shared<DeviceManager>(
+            [this](const std::string& method,
+                   std::map<std::string, LiteArmValue> kwargs) {
+                return rpc(method, std::move(kwargs));
+            });
+    }
+    return devices_->get(device_id);
+}
+
+DeviceManager& Arm::devices() {
+    if (!devices_) {
+        devices_ = std::make_shared<DeviceManager>(
+            [this](const std::string& method,
+                   std::map<std::string, LiteArmValue> kwargs) {
+                return rpc(method, std::move(kwargs));
+            });
+    }
+    return *devices_;
+}
+
+// ── Server extension RPCs ────────────────────────────────────────────────────
+
+LiteArmValue Arm::get_system_stats() {
+    return rpc("get_system_stats");
+}
+
+LiteArmValue Arm::get_logs(int page, int size, const std::string& search) {
+    return rpc("get_logs", {
+        {"page", LiteArmValue(static_cast<int64_t>(page))},
+        {"size", LiteArmValue(static_cast<int64_t>(size))},
+        {"search", LiteArmValue(search)},
+    });
+}
+
+LiteArmValue Arm::restart_service() {
+    return rpc("restart_service");
+}
+
+LiteArmValue Arm::get_joint_limits() {
+    return rpc("get_joint_limits");
+}
+
+LiteArmValue Arm::set_joint_limits(const LiteArmValue& limits) {
+    return rpc("set_joint_limits", {{"limits", limits}});
+}
+
+LiteArmValue Arm::get_zero_offsets() {
+    return rpc("get_zero_offsets");
+}
+
+LiteArmValue Arm::set_zero_offsets(const LiteArmValue& offsets) {
+    return rpc("set_zero_offsets", {{"offsets", offsets}});
+}
+
+LiteArmValue Arm::get_end_effector() {
+    return rpc("get_end_effector");
+}
+
+LiteArmValue Arm::set_end_effector(const LiteArmValue& config) {
+    return rpc("set_end_effector", {{"config", config}});
+}
+
+LiteArmValue Arm::get_cartesian_limits() {
+    return rpc("get_cartesian_limits");
+}
+
+LiteArmValue Arm::set_cartesian_limits(const LiteArmValue& limits) {
+    return rpc("set_cartesian_limits", {{"limits", limits}});
+}
+
+LiteArmValue Arm::get_collision_config() {
+    return rpc("get_collision_config");
+}
+
+LiteArmValue Arm::set_collision_config(const LiteArmValue& config) {
+    return rpc("set_collision_config", {{"config", config}});
+}
+
+LiteArmValue Arm::start_recording() {
+    return rpc("start_recording");
+}
+
+LiteArmValue Arm::stop_recording() {
+    return rpc("stop_recording");
+}
+
+LiteArmValue Arm::discard_recording() {
+    return rpc("discard_recording");
+}
+
+LiteArmValue Arm::get_recording_state() {
+    return rpc("get_recording_state");
+}
+
+LiteArmValue Arm::get_playback_state() {
+    return rpc("get_playback_state");
+}
+
+LiteArmValue Arm::list_trajectories() {
+    return rpc("list_trajectories");
+}
+
+LiteArmValue Arm::save_trajectory(const std::string& id,
+                                  const std::string& name,
+                                  const std::vector<std::vector<double>>& points,
+                                  std::optional<double> duration)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["id"] = LiteArmValue(id);
+    kwargs["name"] = LiteArmValue(name);
+    kwargs["points"] = LiteArmValue::from_mat(points);
+    kwargs["duration"] = duration ? LiteArmValue(*duration) : LiteArmValue(nullptr);
+    return rpc("save_trajectory", std::move(kwargs));
+}
+
+LiteArmValue Arm::delete_trajectory(const std::string& id) {
+    return rpc("delete_trajectory", {{"id", LiteArmValue(id)}});
+}
+
+LiteArmValue Arm::list_device_types() {
+    return rpc("list_device_types");
+}
+
+LiteArmValue Arm::connect_device(const std::string& category,
+                                 const std::string& subtype,
+                                 const std::string& device_id,
+                                 const std::string& can_iface,
+                                 const LiteArmValue& config)
+{
+    return rpc("connect_device", {
+        {"category", LiteArmValue(category)},
+        {"subtype", LiteArmValue(subtype)},
+        {"device_id", LiteArmValue(device_id)},
+        {"can_iface", LiteArmValue(can_iface)},
+        {"config", config},
+    });
+}
+
+LiteArmValue Arm::disconnect_device(const std::string& device_id) {
+    return rpc("disconnect_device", {{"device_id", LiteArmValue(device_id)}});
+}
+
+LiteArmValue Arm::get_active_device(const std::string& device_id) {
+    return rpc("get_active_device", {{"device_id", LiteArmValue(device_id)}});
+}
+
+LiteArmValue Arm::enter_teleop(
+    const std::string& mode,
+    const std::map<std::string, LiteArmValue>& params)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["mode"] = LiteArmValue(mode);
+    for (const auto& [key, value] : params) {
+        kwargs[key] = value;
+    }
+    return rpc("enter_teleop", std::move(kwargs));
+}
+
+LiteArmValue Arm::exit_teleop() {
+    return rpc("exit_teleop");
+}
+
+LiteArmValue Arm::get_teleop_status() {
+    return rpc("get_teleop_status");
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────

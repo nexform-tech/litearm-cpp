@@ -58,6 +58,7 @@ add_library(litearm
     src/codec.cpp
     src/transport.cpp
     src/arm.cpp
+    src/device.cpp
     generated/litearm.pb.cc
 )
 
@@ -99,3 +100,4 @@ add_litearm_test(test_protocol tests/test_protocol.cpp)
 add_litearm_test(test_codec tests/test_codec.cpp)
 add_litearm_test(test_transport tests/test_transport.cpp)
 add_litearm_test(test_arm tests/test_arm.cpp)
+add_litearm_test(test_device tests/test_device.cpp)
