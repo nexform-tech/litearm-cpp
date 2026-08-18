@@ -16,13 +16,46 @@
 | 编译器 | C++17（GCC 8+ / Clang 7+） |
 | CMake | 3.16+ |
 | Protobuf | 3.19+（headers、库、`protoc`） |
-| Google Test | 仅测试需要 |
+| Google Test | 仅测试需要（自动下载） |
+
+### 1.1 安装 protobuf
+
+先检查版本：
+
+```bash
+protoc --version    # 需 "libprotoc 3.19" 或更新版本
+```
+
+若未安装或版本过低，按需选择一种方式：
+
+```bash
+# Debian / Ubuntu（24.04+ 自带 protobuf 3.21）
+sudo apt update && sudo apt install -y protobuf-compiler libprotobuf-dev
+
+# 或 conda（任意系统）
+conda install -c conda-forge protobuf=3.19.6
+
+# 或源码编译（任意系统）
+cd /tmp
+curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.6/protobuf-cpp-3.19.6.tar.gz
+tar xzf protobuf-cpp-3.19.6.tar.gz && cd protobuf-3.19.6
+./configure && make -j$(nproc) && sudo make install
+sudo ldconfig
+```
+
+### 1.2 构建
 
 ```bash
 mkdir build && cd build
-cmake .. -DPROTOBUF_ROOT=/path/to/protobuf   # 系统已安装 protobuf 时可省略该参数
+cmake ..                      # 系统安装的 protobuf 会被自动找到
 cmake --build . -j$(nproc)
-ctest --output-on-failure                     # 运行测试
+ctest --output-on-failure     # 运行测试
+```
+
+protobuf 在自定义前缀（例如已激活的 conda 环境）时：
+
+```bash
+cmake .. -DPROTOBUF_ROOT=$CONDA_PREFIX
 ```
 
 ## 2. 快速开始

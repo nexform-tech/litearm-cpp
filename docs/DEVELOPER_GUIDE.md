@@ -17,13 +17,46 @@ Your program ──→ Arm control service ──→ Arm / CAN
 | Compiler | C++17 (GCC 8+ / Clang 7+) |
 | CMake | 3.16+ |
 | Protobuf | 3.19+ (headers, library, `protoc`) |
-| Google Test | Tests only |
+| Google Test | Tests only (downloaded automatically) |
+
+### 1.1 Install protobuf
+
+Check your version first:
+
+```bash
+protoc --version    # needs "libprotoc 3.19" or newer
+```
+
+If it is missing or too old, install it:
+
+```bash
+# Debian / Ubuntu (24.04+ ships protobuf 3.21)
+sudo apt update && sudo apt install -y protobuf-compiler libprotobuf-dev
+
+# or conda (any OS)
+conda install -c conda-forge protobuf=3.19.6
+
+# or build from source (any OS)
+cd /tmp
+curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.6/protobuf-cpp-3.19.6.tar.gz
+tar xzf protobuf-cpp-3.19.6.tar.gz && cd protobuf-3.19.6
+./configure && make -j$(nproc) && sudo make install
+sudo ldconfig
+```
+
+### 1.2 Build
 
 ```bash
 mkdir build && cd build
-cmake .. -DPROTOBUF_ROOT=/path/to/protobuf   # omit if protobuf is system-installed
+cmake ..                      # system-installed protobuf is found automatically
 cmake --build . -j$(nproc)
-ctest --output-on-failure                     # run tests
+ctest --output-on-failure     # run tests
+```
+
+Protobuf in a custom prefix (e.g. an activated conda env):
+
+```bash
+cmake .. -DPROTOBUF_ROOT=$CONDA_PREFIX
 ```
 
 ## 2. Quick Start

@@ -11,22 +11,59 @@ API 与 [litearm-python](../litearm-python) 对齐，便于跨语言迁移。
 - C++17 编译器（GCC 8+，Clang 7+）
 - CMake 3.16+
 - Protobuf 3.19+（headers、库、`protoc` 编译器）
-- Google Test（仅测试需要）
+- Google Test（仅测试需要；首次配置时自动下载）
+
+## 安装 protobuf
+
+`litearm-cpp` 需要 protobuf ≥ 3.19。先检查本机是否已装：
+
+```bash
+protoc --version    # 应显示 "libprotoc 3.19" 或更新版本
+```
+
+若未安装或版本过低，任选一种方式安装：
+
+**Debian / Ubuntu**（24.04+ 自带 protobuf 3.21）：
+
+```bash
+sudo apt update
+sudo apt install -y protobuf-compiler libprotobuf-dev
+```
+
+**Conda**（任意系统）：
+
+```bash
+conda install -c conda-forge protobuf=3.19.6
+```
+
+**源码编译**（任意系统，无需包管理器）：
+
+```bash
+cd /tmp
+curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.6/protobuf-cpp-3.19.6.tar.gz
+tar xzf protobuf-cpp-3.19.6.tar.gz && cd protobuf-3.19.6
+./configure && make -j$(nproc) && sudo make install
+sudo ldconfig
+```
+
+安装后验证：
+
+```bash
+protoc --version
+```
 
 ## 构建
 
 ```bash
 mkdir build && cd build
-cmake .. -DPROTOBUF_ROOT=/path/to/protobuf
+cmake ..                      # 系统安装的 protobuf 会被自动找到
 cmake --build . -j$(nproc)
 ```
 
-### 查找 Protobuf
-
-若 CMake 未能自动找到 protobuf，可显式指定：
+若 protobuf 安装在自定义前缀（例如已激活的 conda 环境），告诉 CMake 位置：
 
 ```bash
-cmake .. -DPROTOBUF_ROOT=/usr/local
+cmake .. -DPROTOBUF_ROOT=$CONDA_PREFIX
 ```
 
 ## 测试

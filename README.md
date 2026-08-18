@@ -13,23 +13,61 @@ between languages.
 
 - C++17 compiler (GCC 8+, Clang 7+)
 - CMake 3.16+
-- Protobuf 3.19+ (headers, library, and `protoc` compiler)
-- Google Test (for tests)
+- Protobuf 3.19+ (headers, library, and the `protoc` compiler)
+- Google Test (for tests; downloaded automatically on first configure)
+
+## Install protobuf
+
+`litearm-cpp` needs protobuf ≥ 3.19. Check what you already have:
+
+```bash
+protoc --version    # should print "libprotoc 3.19" or newer
+```
+
+If it is missing or too old, pick one of:
+
+**Debian / Ubuntu** (protobuf 3.21 on 24.04+):
+
+```bash
+sudo apt update
+sudo apt install -y protobuf-compiler libprotobuf-dev
+```
+
+**Conda** (any OS):
+
+```bash
+conda install -c conda-forge protobuf=3.19.6
+```
+
+**From source** (any OS, no package manager needed):
+
+```bash
+cd /tmp
+curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.6/protobuf-cpp-3.19.6.tar.gz
+tar xzf protobuf-cpp-3.19.6.tar.gz && cd protobuf-3.19.6
+./configure && make -j$(nproc) && sudo make install
+sudo ldconfig
+```
+
+Verify afterwards:
+
+```bash
+protoc --version
+```
 
 ## Build
 
 ```bash
 mkdir build && cd build
-cmake .. -DPROTOBUF_ROOT=/path/to/protobuf
+cmake ..                      # a system-installed protobuf is found automatically
 cmake --build . -j$(nproc)
 ```
 
-### Finding Protobuf
-
-If protobuf is not auto-detected, point CMake to it explicitly:
+If protobuf lives in a custom prefix (e.g. an activated conda env), tell CMake
+where it is:
 
 ```bash
-cmake .. -DPROTOBUF_ROOT=/usr/local
+cmake .. -DPROTOBUF_ROOT=$CONDA_PREFIX
 ```
 
 ## Test

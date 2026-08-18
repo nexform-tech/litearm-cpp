@@ -6,13 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ── Protobuf ──────────────────────────────────────────────────────────────────
-# Use conda env's protobuf (3.19.6) to match generated code
-set(PROTOBUF_ROOT "$ENV{CONDA_PREFIX}" CACHE PATH "Protobuf install prefix")
-
-# Allow override via -DPROTOBUF_ROOT=...
-if(NOT PROTOBUF_ROOT OR PROTOBUF_ROOT STREQUAL "")
-    # Fallback: try common conda env paths
-    set(PROTOBUF_ROOT "/home/llx/miniconda3/envs/unitree_sim_env")
+# Requires protobuf >= 3.19. A system install is found automatically.
+# For a custom install prefix (e.g. a conda env), pass:
+#     cmake .. -DPROTOBUF_ROOT=$CONDA_PREFIX
+set(PROTOBUF_ROOT "" CACHE PATH "Protobuf install prefix (optional)")
+if(PROTOBUF_ROOT)
+    list(PREPEND CMAKE_PREFIX_PATH "${PROTOBUF_ROOT}")
 endif()
 
 find_path(PROTOBUF_INCLUDE_DIR google/protobuf/message.h
@@ -75,11 +74,20 @@ target_compile_options(litearm PRIVATE -Wall -Wextra -Wpedantic)
 add_dependencies(litearm proto_gen)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+# GoogleTest is downloaded automatically on first configure.
+# For offline builds, point to a local source tree:
+#     cmake .. -DGOOGLETEST_ROOT=/usr/src/googletest
 include(FetchContent)
-FetchContent_Declare(
-    googletest
-    SOURCE_DIR "/usr/src/googletest"
-)
+set(GOOGLETEST_ROOT "" CACHE PATH "Local GoogleTest source dir (optional)")
+if(GOOGLETEST_ROOT)
+    FetchContent_Declare(googletest SOURCE_DIR ${GOOGLETEST_ROOT})
+else()
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.14.0
+    )
+endif()
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
