@@ -3,6 +3,8 @@
 #include "litearm/exceptions.hpp"
 #include "litearm/protocol.hpp"
 
+#include <chrono>
+
 namespace litearm {
 
 // ── Constructor / Destructor ────────────────────────────────────────────────
@@ -491,6 +493,9 @@ void Arm::send_mit(const std::vector<double>& kp, const std::vector<double>& kd,
                    const std::vector<double>& tau_ff) {
     std::string frame = R"({"type":"mit","client_id":")" + client_id_ +
                         R"(","seq":)" + std::to_string(seq_++) +
+                        R"(,"ts":)" + std::to_string(
+                            std::chrono::duration<double>(
+                                std::chrono::system_clock::now().time_since_epoch()).count()) +
                         R"(,"kp":)" + json_list(kp) +
                         R"(,"kd":)" + json_list(kd) +
                         R"(,"q_ref":)" + json_list(q_ref) +
