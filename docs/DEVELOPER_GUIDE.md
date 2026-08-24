@@ -10,6 +10,27 @@ Your program ──→ Arm control service ──→ Arm / CAN
 
 ---
 
+## Table of Contents
+
+- [1. Requirements & Build](#1-requirements--build)
+  - [1.1 Install protobuf](#11-install-protobuf)
+  - [1.2 Build](#12-build)
+- [2. Quick Start](#2-quick-start)
+- [3. Connection Management](#3-connection-management)
+- [4. Value Type: LiteArmValue](#4-value-type-litearmvalue)
+- [5. API Reference](#5-api-reference)
+  - [5.1 Computation (no motors driven)](#51-computation-no-motors-driven)
+  - [5.2 Motion Control](#52-motion-control)
+  - [5.3 State Reading](#53-state-reading)
+  - [5.4 Emergency Stop / Enable](#54-emergency-stop--enable)
+  - [5.5 DIRECT Mode — Per-frame MIT Direct Control](#55-direct-mode--per-frame-mit-direct-control)
+  - [5.6 Parameters](#56-parameters)
+  - [5.7 Peripheral Devices](#57-peripheral-devices)
+  - [5.8 System / Settings / Trajectories / Devices / Teleop](#58-system--settings--trajectories--devices--teleop-extended-interfaces)
+- [6. Exceptions](#6-exceptions)
+- [7. Safety Notes](#7-safety-notes)
+- [8. Comparison with litearm-python](#8-comparison-with-litearm-python)
+
 ## 1. Requirements & Build
 
 | Item | Requirement |
@@ -166,7 +187,202 @@ aliases `Vec7`, `Mat3x3`.
 | `enable()` | Enable all motors and lock the current pose |
 | `disable()` | ⚠️ Disables all motors (the arm drops under gravity!), CAN stays connected |
 
-### 5.5 Parameters
+### 5.5 DIRECT Mode — Per-frame MIT Direct Control
+
+> DIRECT mode is LiteArm's per-frame MIT direct control channel. Send five-parameter
+> (kp/kd/q_ref/dq_ref/tau_ff) commands at a typical 250Hz to control joint motors in real-time,
+> with 4 never-disableable core safety guardrails built in.
+
+**Comparison with ordinary motion control:**
+
+| Feature | Ordinary motion control (`movej` etc.) | DIRECT mode (`send_mit`) |
+| --- | --- | --- |
+| Control method | Target position + velocity, auto-planned | Per-frame 5-parameter MIT command |
+| Frame rate | One call, auto-execution | User loop control (typical 250Hz) |
+| Blocking | Blocking, waits for completion | Non-blocking, returns immediately |
+
+**Entry and exit:**
+
+- **Entry**: Automatically enters DIRECT mode on the first `send_mit` call
+- **Exit**: `request_stop()` / watchdog timeout / motor fault
+
+#### send_mit — Send MIT Control Frame
+
+**Description:** Async publish a five-parameter MIT control frame to the arm command
+channel. Non-blocking, returns immediately. First call auto-enters DIRECT mode.
+
+**Function Definition:**
+
+```cpp
+void send_mit(
+    const std::vector<double>& kp,      // length 7, position stiffness
+    const std::vector<double>& kd,      // length 7, velocity damping
+    const std::vector<double>& q_ref,   // length 7, target joint angles (rad)
+    const std::vector<double>& dq_ref,  // length 7, target angular velocity (rad/s)
+    const std::vector<double>& tau_ff   // length 7, feedforward torque (N·m)
+);
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `kp` | `const std::vector<double>&` | Position stiffness, length 7, range `[0, 500]`. Typical: 15–200 |
+| `kd` | `const std::vector<double>&` | Velocity damping, length 7, range `[0, 5]`. Typical: 0.5–3.0 |
+| `q_ref` | `const std::vector<double>&` | Target joint angles (rad), length 7. Inter-frame jumps are slew-limited |
+| `dq_ref` | `const std::vector<double>&` | Target angular velocity (rad/s), length 7. Clamped to `±DQ_MAX` |
+| `tau_ff` | `const std::vector<double>&` | Feedforward torque (N·m), length 7. Clamped to `±min(guards_tau_max, TAU_MAX)` |
+
+**Return Value:** `void` — async send, no acknowledgment.
+
+**Usage Example:**
+
+```cpp
+// Single frame (auto-enters DIRECT mode)
+arm.send_mit(
+    {50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0},
+    {1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+);
+```
+
+#### set_guards — Configure Global Guardrails
+
+**Description:** One-time global guardrail configuration (RPC). All params are
+`std::optional`, `std::nullopt` = no change. **Globally persistent**: not reset on DIRECT exit.
+
+**Function Definition:**
+
+```cpp
+LiteArmValue set_guards(
+    std::optional<double> slew_limit = std::nullopt,
+    std::optional<double> tau_max = std::nullopt,
+    std::optional<double> watchdog_timeout = std::nullopt,
+    std::optional<bool> position_bounds = std::nullopt,
+    std::optional<bool> velocity_bounds = std::nullopt,
+    std::optional<bool> jerk_limit = std::nullopt
+);
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `slew_limit` | `std::optional<double>` | Global slew rate limit (rad/s). `std::nullopt` = no change |
+| `tau_max` | `std::optional<double>` | Global torque limit (N·m). `std::nullopt` = no change |
+| `watchdog_timeout` | `std::optional<double>` | Watchdog timeout (s), range `[0.05, 2.0]` |
+| `position_bounds` | `std::optional<bool>` | Enable position soft-limits. Default `false` |
+| `velocity_bounds` | `std::optional<bool>` | Enable velocity soft-limits. Default `false` |
+| `jerk_limit` | `std::optional<bool>` | Enable jerk limiting. Default `false` |
+
+**Return Value:** `LiteArmValue` — RPC reply.
+
+**Usage Example:**
+
+```cpp
+// Combined configuration
+arm.set_guards(1.0, 10.0, 0.10, true);
+// slew_limit=1.0, tau_max=10.0, watchdog_timeout=0.10, position_bounds=true
+
+// Single parameter change
+arm.set_guards(std::nullopt, std::nullopt, 0.05);  // tighten watchdog to 50ms
+```
+
+#### get_guards — Read Current Guardrail Configuration
+
+**Description:** Read the currently active guardrail configuration (RPC, synchronous).
+
+**Function Definition:**
+
+```cpp
+LiteArmValue get_guards();
+```
+
+**Return Value:** `LiteArmValue` — map with 6 fields.
+
+**Usage Example:**
+
+```cpp
+auto guards = arm.get_guards();
+auto kw = guards.as_map();
+std::cout << "slew_limit = " << kw["slew_limit"].as_double() << " rad/s\n";
+```
+
+#### Full Control Loop Example
+
+```cpp
+/** DIRECT mode 250Hz control loop — sine wave on joint 1. */
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <thread>
+#include <vector>
+#include <signal.h>
+#include "litearm/arm.hpp"
+#include "litearm/transport.hpp"
+
+static volatile sig_atomic_t running = 1;
+void handle_signal(int) { running = 0; }
+
+int main() {
+    signal(SIGINT, handle_signal);
+
+    constexpr double DT = 0.004;   // 4ms → 250Hz
+    constexpr double FREQ = 0.5;
+    constexpr double AMP = 0.5;
+    constexpr int N = 7;
+
+    auto tp = std::make_shared<litearm::ZenohTransport>("tcp/192.168.1.100:7447");
+    litearm::Arm arm("", "armA", tp);
+
+    arm.set_guards(2.0, 20.0, 0.10, true);
+
+    double t = 0.0;
+    while (running) {
+        auto loop_start = std::chrono::steady_clock::now();
+
+        std::vector<double> q_ref(N, 0.0);
+        q_ref[0] = AMP * std::sin(2.0 * M_PI * FREQ * t);
+
+        arm.send_mit(
+            std::vector<double>(N, 50.0),
+            std::vector<double>(N, 1.5),
+            q_ref,
+            std::vector<double>(N, 0.0),
+            std::vector<double>(N, 0.0)
+        );
+
+        t += DT;
+        auto elapsed = std::chrono::steady_clock::now() - loop_start;
+        auto sleep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(DT) - elapsed);
+        if (sleep_ns.count() > 0) std::this_thread::sleep_for(sleep_ns);
+    }
+
+    arm.request_stop();
+    std::cout << "DIRECT mode exited" << std::endl;
+    return 0;
+}
+```
+
+#### Safety Guardrails
+
+| Guardrail | Description | Disableable? |
+| --- | --- | --- |
+| **Guard 1: Protocol param clamp** | kp≤500, kd≤5, dq_ref≤DQ_MAX, tau_ff≤TAU_MAX | Never |
+| **Guard 2: Command slew limit** | Inter-frame q_ref jump ≤ slew_limit × dt, dt capped at 0.10s | Never; `slew_limit` can be tightened |
+| **Guard 3: Watchdog fail-soft** | Command interruption → auto-hold (low-stiffness PD) | Never; `watchdog_timeout` adjustable |
+| **Guard 4: Single ownership** | Rejects motion commands and teleop while DIRECT active | Never |
+| **Position bounds (optional)** | q_ref clamped to joint soft-limits per frame | Off by default; `position_bounds: true` |
+| **Velocity bounds (optional)** | dq_ref clamped to `±DQ_MAX` per frame | Off by default; `velocity_bounds: true` |
+| **Jerk limit (optional)** | dq_ref change rate limited per frame | Off by default; `jerk_limit: true` |
+
+> **Safety bottom line: The arm must never fly away.**
+> Command slew limit + single ownership + watchdog fail-soft + firmware fallback.
+
+### 5.6 Parameters
 
 | Method | Description |
 |---|---|
@@ -175,7 +391,7 @@ aliases `Vec7`, `Mat3x3`.
 | `set_payload(mass, com={0,0,0})` / `get_payload()` | End-effector payload (mass + center of mass) |
 | `set_installation(base_rpy=nullopt, gravity=nullopt)` / `get_installation()` | Mounting orientation (base RPY or gravity vector) |
 
-### 5.6 Peripheral Devices
+### 5.7 Peripheral Devices
 
 ```cpp
 auto hand = arm.device("hand_0");          // RemoteDevice
@@ -199,7 +415,7 @@ teach.get_joints(); teach.get_buttons();
 `RemoteDevice::call(method, kwargs)` invokes any device method, automatically
 adding the `device.{id}.` prefix.
 
-### 5.7 System / Settings / Trajectories / Devices / Teleop (extended interfaces)
+### 5.8 System / Settings / Trajectories / Devices / Teleop (extended interfaces)
 
 All return `LiteArmValue`:
 

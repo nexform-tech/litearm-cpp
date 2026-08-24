@@ -9,6 +9,27 @@
 
 ---
 
+## 目录
+
+- [1. 环境要求与构建](#1-环境要求与构建)
+  - [1.1 安装 protobuf](#11-安装-protobuf)
+  - [1.2 构建](#12-构建)
+- [2. 快速开始](#2-快速开始)
+- [3. 连接管理](#3-连接管理)
+- [4. 值类型 LiteArmValue](#4-值类型-litearmvalue)
+- [5. 接口说明](#5-接口说明)
+  - [5.1 计算（不驱动电机）](#51-计算不驱动电机)
+  - [5.2 运动控制](#52-运动控制)
+  - [5.3 状态读取](#53-状态读取)
+  - [5.4 急停 / 使能](#54-急停--使能)
+  - [5.5 DIRECT 模式 —— 逐帧 MIT 直接控制](#55-direct-模式--逐帧-mit-直接控制)
+  - [5.6 参数调节](#56-参数调节)
+  - [5.7 外设设备](#57-外设设备)
+  - [5.8 系统 / 设置 / 轨迹 / 设备管理 / 遥操](#58-系统--设置--轨迹--设备管理--遥操)
+- [6. 异常处理](#6-异常处理)
+- [7. 安全提示](#7-安全提示)
+- [8. 与 litearm-python 对比](#8-与-litearm-python-对比)
+
 ## 1. 环境要求与构建
 
 | 项目 | 要求 |
@@ -161,7 +182,199 @@ auto cfg  = LiteArmValue::make_map({{"type", LiteArmValue("gripper")}});
 | `enable()` | 使能全部电机并锁住当前姿态 |
 | `disable()` | ⚠️ 失能全部电机（机械臂会掉臂！），CAN 保持连接 |
 
-### 5.5 参数调节
+### 5.5 DIRECT 模式 —— 逐帧 MIT 直接控制
+
+> DIRECT 模式是 LiteArm 的逐帧 MIT 直接控制通道。通过 `send_mit` 以 250Hz 典型频率
+> 发送五参数 (kp/kd/q_ref/dq_ref/tau_ff) 实时控制关节电机，内置 4 条永不关闭的核心安全护栏。
+
+**与普通运动控制的区别：**
+
+| 特性 | 普通运动控制 (`movej` 等) | DIRECT 模式 (`send_mit`) |
+| --- | --- | --- |
+| 控制方式 | 目标位置 + 速度，自动规划 | 逐帧五参数 MIT 命令 |
+| 帧率 | 一次调用，自动执行 | 用户循环控制（典型 250Hz） |
+| 阻塞 | 阻塞，等运动完成 | 非阻塞，立即返回 |
+
+**进入与退出：**
+
+- **进入**：首次调用 `send_mit` 时自动进入 DIRECT 模式
+- **退出**：`request_stop()` 主动退出 / 看门狗超时自动回 hold / 电机故障自动退出
+
+#### send_mit —— 发送 MIT 控制帧
+
+**Description:** 异步 pub 五参数 MIT 控制帧到机械臂命令通道。非阻塞，立即返回。首次调用自动进入 DIRECT 模式。
+
+**Function Definition:**
+
+```cpp
+void send_mit(
+    const std::vector<double>& kp,      // 长度 7，位置刚度
+    const std::vector<double>& kd,      // 长度 7，速度阻尼
+    const std::vector<double>& q_ref,   // 长度 7，目标关节角度 (rad)
+    const std::vector<double>& dq_ref,  // 长度 7，目标角速度 (rad/s)
+    const std::vector<double>& tau_ff   // 长度 7，前馈力矩 (N·m)
+);
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `kp` | `const std::vector<double>&` | 位置刚度，长度 7，范围 `[0, 500]`。典型值 15–200 |
+| `kd` | `const std::vector<double>&` | 速度阻尼，长度 7，范围 `[0, 5]`。典型值 0.5–3.0 |
+| `q_ref` | `const std::vector<double>&` | 目标关节角度（rad），长度 7。相邻帧跳变受斜率限制 |
+| `dq_ref` | `const std::vector<double>&` | 目标角速度（rad/s），长度 7。被 clamp 到 `±DQ_MAX` |
+| `tau_ff` | `const std::vector<double>&` | 前馈力矩（N·m），长度 7。被 clamp 到 `±min(guards_tau_max, TAU_MAX)` |
+
+**Return Value:** `void` — 异步发送，不等待回执。
+
+**Usage Example:**
+
+```cpp
+// 发送单帧（自动进入 DIRECT 模式）
+arm.send_mit(
+    {50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0},
+    {1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+);
+```
+
+#### set_guards —— 配置全局护栏
+
+**Description:** 全局一次性配置护栏参数（RPC）。所有参数为 `std::optional`，`std::nullopt` 表示不改变。**全局持久**：退出 DIRECT 后不重置。
+
+**Function Definition:**
+
+```cpp
+LiteArmValue set_guards(
+    std::optional<double> slew_limit = std::nullopt,
+    std::optional<double> tau_max = std::nullopt,
+    std::optional<double> watchdog_timeout = std::nullopt,
+    std::optional<bool> position_bounds = std::nullopt,
+    std::optional<bool> velocity_bounds = std::nullopt,
+    std::optional<bool> jerk_limit = std::nullopt
+);
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `slew_limit` | `std::optional<double>` | 全局斜率限制（rad/s）。`std::nullopt` = 不改变 |
+| `tau_max` | `std::optional<double>` | 全局力矩上限（N·m）。`std::nullopt` = 不改变 |
+| `watchdog_timeout` | `std::optional<double>` | 看门狗超时（秒），范围 `[0.05, 2.0]` |
+| `position_bounds` | `std::optional<bool>` | 是否开启位置软限位。默认 `false` |
+| `velocity_bounds` | `std::optional<bool>` | 是否开启速度软限位。默认 `false` |
+| `jerk_limit` | `std::optional<bool>` | 是否开启加加速度限制。默认 `false` |
+
+**Return Value:** `LiteArmValue` — RPC 回复值。
+
+**Usage Example:**
+
+```cpp
+// 组合配置
+arm.set_guards(1.0, 10.0, 0.10, true);
+// slew_limit=1.0, tau_max=10.0, watchdog_timeout=0.10, position_bounds=true
+
+// 仅修改单个参数
+arm.set_guards(std::nullopt, std::nullopt, 0.05);  // 仅收紧看门狗到 50ms
+```
+
+#### get_guards —— 读取当前护栏配置
+
+**Description:** 读取当前生效的护栏配置（RPC 同步）。
+
+**Function Definition:**
+
+```cpp
+LiteArmValue get_guards();
+```
+
+**Return Value:** `LiteArmValue` — 包含 6 个字段的 map。
+
+**Usage Example:**
+
+```cpp
+auto guards = arm.get_guards();
+auto kw = guards.as_map();
+std::cout << "slew_limit = " << kw["slew_limit"].as_double() << " rad/s\n";
+```
+
+#### 完整控制循环示例
+
+```cpp
+/** DIRECT 模式 250Hz 控制循环 —— 正弦波扫关节1。 */
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <thread>
+#include <vector>
+#include <signal.h>
+#include "litearm/arm.hpp"
+#include "litearm/transport.hpp"
+
+static volatile sig_atomic_t running = 1;
+void handle_signal(int) { running = 0; }
+
+int main() {
+    signal(SIGINT, handle_signal);
+
+    constexpr double DT = 0.004;   // 4ms → 250Hz
+    constexpr double FREQ = 0.5;
+    constexpr double AMP = 0.5;
+    constexpr int N = 7;
+
+    auto tp = std::make_shared<litearm::ZenohTransport>("tcp/192.168.1.100:7447");
+    litearm::Arm arm("", "armA", tp);
+
+    // 配置护栏（一次性）
+    arm.set_guards(2.0, 20.0, 0.10, true);
+
+    double t = 0.0;
+    while (running) {
+        auto loop_start = std::chrono::steady_clock::now();
+
+        std::vector<double> q_ref(N, 0.0);
+        q_ref[0] = AMP * std::sin(2.0 * M_PI * FREQ * t);
+
+        arm.send_mit(
+            std::vector<double>(N, 50.0),
+            std::vector<double>(N, 1.5),
+            q_ref,
+            std::vector<double>(N, 0.0),
+            std::vector<double>(N, 0.0)
+        );
+
+        t += DT;
+        auto elapsed = std::chrono::steady_clock::now() - loop_start;
+        auto sleep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(DT) - elapsed);
+        if (sleep_ns.count() > 0) std::this_thread::sleep_for(sleep_ns);
+    }
+
+    arm.request_stop();
+    std::cout << "已退出 DIRECT 模式" << std::endl;
+    return 0;
+}
+```
+
+#### 安全护栏说明
+
+| 护栏 | 说明 | 可关闭？ |
+| --- | --- | --- |
+| **护栏1：协议参数 clamp** | kp≤500、kd≤5、dq_ref≤DQ_MAX、tau_ff≤TAU_MAX | 不可关闭 |
+| **护栏2：命令通道斜率限制** | 相邻帧 q_ref 跳变 ≤ slew_limit × dt，dt 有上界 0.10s | 不可关闭，`slew_limit` 可收紧 |
+| **护栏3：看门狗 fail-soft** | 命令中断超时自动回 hold | 不可关闭，`watchdog_timeout` 可调 |
+| **护栏4：单一所有权** | DIRECT 激活时拒绝运动命令和遥操 | 不可关闭 |
+| **位置限制（附加）** | q_ref 逐帧 clamp 到关节软限位 | 默认关，`position_bounds: true` 开启 |
+| **速度限制（附加）** | dq_ref 逐帧 clamp 到 `±DQ_MAX` | 默认关，`velocity_bounds: true` 开启 |
+| **加加速度限制（附加）** | dq_ref 变化率受限 | 默认关，`jerk_limit: true` 开启 |
+
+> **安全底线：机械臂永远不允许乱飞。** 命令通道斜率限制 + 单一收口 + 看门狗 fail-soft + 固件兜底。
+
+### 5.6 参数调节
 
 | 方法 | 说明 |
 |---|---|
@@ -170,7 +383,7 @@ auto cfg  = LiteArmValue::make_map({{"type", LiteArmValue("gripper")}});
 | `set_payload(mass, com={0,0,0})` / `get_payload()` | 末端负载（质量 + 质心） |
 | `set_installation(base_rpy=nullopt, gravity=nullopt)` / `get_installation()` | 安装姿态（基座 RPY 或重力向量） |
 
-### 5.6 外设设备
+### 5.7 外设设备
 
 ```cpp
 auto hand = arm.device("hand_0");          // RemoteDevice
@@ -193,7 +406,7 @@ teach.get_joints(); teach.get_buttons();
 
 `RemoteDevice::call(method, kwargs)` 可调用任意设备方法，自动加 `device.{id}.` 前缀。
 
-### 5.7 系统 / 设置 / 轨迹 / 设备管理 / 遥操（扩展接口）
+### 5.8 系统 / 设置 / 轨迹 / 设备管理 / 遥操
 
 均返回 `LiteArmValue`：
 
