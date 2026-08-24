@@ -246,6 +246,24 @@ public:
     /// Clear motor faults. Returns list of cleared (motor_id, fault_code).
     LiteArmValue clear_faults();
 
+    /// Direct joint motor control via pure MIT five-parameter per-frame publish.
+    /// Async pub to the command topic — no RPC round-trip.
+    void send_mit(const std::vector<double>& kp, const std::vector<double>& kd,
+                  const std::vector<double>& q_ref, const std::vector<double>& dq_ref,
+                  const std::vector<double>& tau_ff);
+
+    /// Configure global safety guards (RPC). nullopt leaves the guard unchanged.
+    LiteArmValue set_guards(
+        std::optional<double> slew_limit = std::nullopt,
+        std::optional<double> tau_max = std::nullopt,
+        std::optional<double> watchdog_timeout = std::nullopt,
+        std::optional<bool> position_bounds = std::nullopt,
+        std::optional<bool> velocity_bounds = std::nullopt,
+        std::optional<bool> jerk_limit = std::nullopt);
+
+    /// Read current guard configuration (RPC).
+    LiteArmValue get_guards();
+
     /// Enable all motors and hold current pose (re-enable after disable()).
     void enable();
 
@@ -350,6 +368,9 @@ private:
     std::string arm_id_;
     std::string rpc_topic_;
     std::string estop_topic_;
+    std::string command_topic_;
+    std::string client_id_;
+    int seq_ = 0;
     std::shared_ptr<Sub> state_sub_;
     std::optional<RobotState> last_state_;
     std::shared_ptr<DeviceManager> devices_;  // lazy (created on first use)

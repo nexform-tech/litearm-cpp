@@ -13,6 +13,8 @@ Arm::Arm(const std::string& /*endpoint*/,
     : arm_id_(arm_id)
     , rpc_topic_(rpc_topic(arm_id))
     , estop_topic_(estop_topic(arm_id))
+    , command_topic_(command_topic(arm_id))
+    , client_id_("sdk-cpp-" + std::to_string(std::hash<std::string>{}(arm_id) & 0xFFFF))
 {
     if (transport) {
         tp_ = std::move(transport);
@@ -470,6 +472,51 @@ LiteArmValue Arm::get_gains() {
 
 LiteArmValue Arm::clear_faults() {
     return rpc("clear_faults");
+}
+
+namespace {
+std::string json_list(const std::vector<double>& v) {
+    std::string s = "[";
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+    }
+    s += "]";
+    return s;
+}
+}  // namespace
+
+void Arm::send_mit(const std::vector<double>& kp, const std::vector<double>& kd,
+                   const std::vector<double>& q_ref, const std::vector<double>& dq_ref,
+                   const std::vector<double>& tau_ff) {
+    std::string frame = R"({"type":"mit","client_id":")" + client_id_ +
+                        R"(","seq":)" + std::to_string(seq_++) +
+                        R"(,"kp":)" + json_list(kp) +
+                        R"(,"kd":)" + json_list(kd) +
+                        R"(,"q_ref":)" + json_list(q_ref) +
+                        R"(,"dq_ref":)" + json_list(dq_ref) +
+                        R"(,"tau_ff":)" + json_list(tau_ff) + "}";
+    tp_->pub(command_topic_, frame);
+}
+
+LiteArmValue Arm::set_guards(std::optional<double> slew_limit,
+                             std::optional<double> tau_max,
+                             std::optional<double> watchdog_timeout,
+                             std::optional<bool> position_bounds,
+                             std::optional<bool> velocity_bounds,
+                             std::optional<bool> jerk_limit) {
+    std::map<std::string, LiteArmValue> kw;
+    if (slew_limit) kw["slew_limit"] = *slew_limit;
+    if (tau_max) kw["tau_max"] = *tau_max;
+    if (watchdog_timeout) kw["watchdog_timeout"] = *watchdog_timeout;
+    if (position_bounds) kw["position_bounds"] = *position_bounds;
+    if (velocity_bounds) kw["velocity_bounds"] = *velocity_bounds;
+    if (jerk_limit) kw["jerk_limit"] = *jerk_limit;
+    return rpc("set_guards", kw);
+}
+
+LiteArmValue Arm::get_guards() {
+    return rpc("get_guards", {});
 }
 
 void Arm::enable() {
