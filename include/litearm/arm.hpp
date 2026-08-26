@@ -34,10 +34,11 @@ namespace litearm {
 class Arm {
 public:
     /// Connect to a litearm-server daemon.
-    /// @param endpoint  Zenoh endpoint (e.g. "tcp/127.0.0.1:7447")
+    /// @param endpoint  Zenoh endpoint (e.g. "tcp/127.0.0.1:7447").
+    ///                  Defaults to ``LITEARM_ENDPOINT`` env var, then ``tcp/127.0.0.1:7447``.
     /// @param arm_id    Arm identifier (default "armA")
     /// @param transport Optional pre-configured Transport (for testing)
-    explicit Arm(const std::string& endpoint = "tcp/127.0.0.1:7447",
+    explicit Arm(const std::string& endpoint = "",
                  const std::string& arm_id = "armA",
                  std::shared_ptr<Transport> transport = nullptr);
 
@@ -365,6 +366,7 @@ private:
                      std::map<std::string, LiteArmValue> kwargs = {});
 
     std::shared_ptr<Transport> tp_;
+    std::string endpoint_;
     std::string arm_id_;
     std::string rpc_topic_;
     std::string estop_topic_;

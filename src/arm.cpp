@@ -4,12 +4,13 @@
 #include "litearm/protocol.hpp"
 
 #include <chrono>
+#include <cstdlib>
 
 namespace litearm {
 
 // ── Constructor / Destructor ────────────────────────────────────────────────
 
-Arm::Arm(const std::string& /*endpoint*/,
+Arm::Arm(const std::string& endpoint,
          const std::string& arm_id,
          std::shared_ptr<Transport> transport)
     : arm_id_(arm_id)
@@ -18,6 +19,14 @@ Arm::Arm(const std::string& /*endpoint*/,
     , command_topic_(command_topic(arm_id))
     , client_id_("sdk-cpp-" + std::to_string(std::hash<std::string>{}(arm_id) & 0xFFFF))
 {
+    // Resolve endpoint: explicit arg > LITEARM_ENDPOINT env > default
+    std::string resolved_endpoint = endpoint;
+    if (resolved_endpoint.empty()) {
+        const char* env = std::getenv("LITEARM_ENDPOINT");
+        resolved_endpoint = env ? env : "tcp/127.0.0.1:7447";
+    }
+    endpoint_ = resolved_endpoint;
+
     if (transport) {
         tp_ = std::move(transport);
     } else {
