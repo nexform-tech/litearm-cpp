@@ -124,6 +124,9 @@ int main() {
     // 关节空间运动
     arm.movej({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, /*speed=*/0.5);
 
+    // 回零：所有关节归零，绕开限位和自碰检查
+    arm.home(/*speed=*/0.3, /*settle_s=*/0.5);
+
     // 正运动学
     auto [pos, rot] = arm.fk({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
 
@@ -180,6 +183,7 @@ int main() {
 ### 运动
 
 - `movej(q_target, speed, settle_s, max_cycles, allow_start_collision_recovery)` — 关节空间运动
+- `home(speed, settle_s, max_cycles)` — 回零：所有关节归零，绕开限位和自碰路径检查
 - `recover_joint_limits(speed, settle_s, max_cycles, inset_rad)` — 越限关节回安全边界
 - `movel(pose_goal, speed, settle_s, max_cycles)` — 笛卡尔直线
 - `movec(pose_via, pose_goal, ...)` — 圆弧

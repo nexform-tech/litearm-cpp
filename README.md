@@ -128,6 +128,9 @@ int main() {
     // Move to joint target
     arm.movej({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, /*speed=*/0.5);
 
+    // Home all joints to zero (bypasses joint-limit & self-collision checks)
+    arm.home(/*speed=*/0.3, /*settle_s=*/0.5);
+
     // Forward kinematics
     auto [pos, rot] = arm.fk({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
 
@@ -186,6 +189,7 @@ The `litearm::Arm` class provides these method groups:
 ### Motion
 
 - `movej(q_target, speed, settle_s, max_cycles, allow_start_collision_recovery)` — Joint-space move
+- `home(speed, settle_s, max_cycles)` — Home all joints to zero, bypasses joint-limit & self-collision path checks
 - `recover_joint_limits(speed, settle_s, max_cycles, inset_rad)` — Return out-of-limit joints to safe boundary
 - `movel(pose_goal, speed, settle_s, max_cycles)` — Cartesian line
 - `movec(pose_via, pose_goal, ...)` — Circular arc
