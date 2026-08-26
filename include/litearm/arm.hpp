@@ -94,6 +94,15 @@ public:
                               std::optional<int> max_cycles = std::nullopt,
                               double inset_rad = 0.0);
 
+    /// Home all joints to zero position ([0, 0, 0, 0, 0, 0, 0]).
+    /// Unlike movej, home() bypasses joint-limit and self-collision path
+    /// safety checks. Hardware-level fault / temperature / overspeed /
+    /// following-error protection remains active.
+    /// Default speed is 0.3 (slow) — homing is a recovery operation.
+    bool home(double speed = 0.3,
+              double settle_s = 0.5,
+              std::optional<int> max_cycles = std::nullopt);
+
     /// Move in a straight Cartesian line.
     bool movel(const LiteArmValue& pose_goal,
                double speed = 1.0,
@@ -306,6 +315,10 @@ public:
 
     /// Request restart of the arm service.
     LiteArmValue restart_service();
+
+    /// Reconnect hardware from any state — re-initialize motors after arm hot-restart.
+    /// Returns { "state": str, "success": bool, "error": str (optional) }.
+    LiteArmValue reconnect();
 
     LiteArmValue get_joint_limits();
     LiteArmValue set_joint_limits(const LiteArmValue& limits);

@@ -149,6 +149,7 @@ auto cfg  = LiteArmValue::make_map({{"type", LiteArmValue("gripper")}});
 | 方法 | 说明 |
 |---|---|
 | `movej(q_target, speed=1.0, settle_s=1.0, max_cycles=nullopt, allow_start_collision_recovery=false)` | 关节空间点到点 |
+| `home(speed=0.3, settle_s=0.5, max_cycles=nullopt)` | 回零：所有关节归零，绕开限位和自碰路径检查 |
 | `recover_joint_limits(speed=0.05, settle_s=0.5, max_cycles=nullopt, inset_rad=0.0)` | 越限关节缓慢回安全边界（需 server `allow_limit_recovery=True`） |
 | `movel(pose_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 笛卡尔直线 |
 | `movec(pose_via, pose_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 笛卡尔圆弧 |
@@ -412,7 +413,7 @@ teach.get_joints(); teach.get_buttons();
 
 | 分组 | 方法 |
 |---|---|
-| 系统 | `get_system_stats()`、`get_logs(page=1, size=50, search="")`、`restart_service()` |
+| 系统 | `get_system_stats()`、`get_logs(page=1, size=50, search="")`、`restart_service()`、`reconnect()` |
 | 设置 | `get_joint_limits/set_joint_limits(limits)`、`get_zero_offsets/set_zero_offsets(offsets)`、`get_end_effector/set_end_effector(config)`、`get_cartesian_limits/set_cartesian_limits(limits)`、`get_collision_config/set_collision_config(config)` |
 | 轨迹 | `start_recording/stop_recording/discard_recording/get_recording_state/get_playback_state/list_trajectories/save_trajectory(id,name,points,duration=nullopt)/delete_trajectory(id)` |
 | 设备 | `list_device_types()`、`connect_device(category, subtype, device_id="end_0", can_iface="", config={})`、`disconnect_device(device_id="end_0")`、`get_active_device(device_id="end_0")` |

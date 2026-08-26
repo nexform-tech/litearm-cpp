@@ -149,6 +149,19 @@ bool Arm::recover_joint_limits(double speed, double settle_s,
     return rpc("recover_joint_limits", std::move(kwargs)).as_bool();
 }
 
+bool Arm::home(double speed, double settle_s,
+               std::optional<int> max_cycles)
+{
+    std::map<std::string, LiteArmValue> kwargs;
+    kwargs["speed"] = LiteArmValue(speed);
+    kwargs["settle_s"] = LiteArmValue(settle_s);
+    kwargs["max_cycles"] = max_cycles
+        ? LiteArmValue(static_cast<int64_t>(*max_cycles))
+        : LiteArmValue(nullptr);
+
+    return rpc("home", std::move(kwargs)).as_bool();
+}
+
 bool Arm::movel(const LiteArmValue& pose_goal,
                 double speed, double settle_s,
                 std::optional<int> max_cycles)
@@ -610,6 +623,10 @@ LiteArmValue Arm::get_logs(int page, int size, const std::string& search) {
 
 LiteArmValue Arm::restart_service() {
     return rpc("restart_service");
+}
+
+LiteArmValue Arm::reconnect() {
+    return rpc("reconnect");
 }
 
 LiteArmValue Arm::get_joint_limits() {
