@@ -295,6 +295,26 @@ public:
     /// Get current installation configuration.
     LiteArmValue get_installation();
 
+    /// Set per-joint gravity calibration scale (7 non-negative values,
+    /// multiplicative on the CAD gravity torque). Default transition_s=2.0s gives
+    /// a smooth linear ramp so the compensation torque never jumps; transition_s<=0
+    /// applies instantly (offline/static only).
+    LiteArmValue set_gravity_scale(std::vector<double> scale,
+                                   double transition_s = 2.0);
+
+    /// Get current per-joint gravity calibration scale. During a transition the
+    /// returned "scale" is the mid-transition value and "target" is set.
+    LiteArmValue get_gravity_scale();
+
+    /// Persist current gravity scale to the server yaml (effective after restart).
+    LiteArmValue save_gravity_scale();
+
+    /// Persist current payload (mass + com) to the server yaml (effective after restart).
+    LiteArmValue save_payload();
+
+    /// Persist current installation orientation (base_rpy) to the server yaml.
+    LiteArmValue save_installation();
+
     // ── Peripheral devices ───────────────────────────────────────────────────
 
     /// Get a remote device interface (hand/gripper/teach), e.g. "hand_0".

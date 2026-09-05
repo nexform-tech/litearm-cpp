@@ -583,6 +583,30 @@ LiteArmValue Arm::get_installation() {
     return rpc("get_installation");
 }
 
+LiteArmValue Arm::set_gravity_scale(std::vector<double> scale,
+                                    double transition_s) {
+    return rpc("set_gravity_scale", {
+        {"scale", LiteArmValue::from_vec(scale)},
+        {"transition_s", LiteArmValue(transition_s)},
+    });
+}
+
+LiteArmValue Arm::get_gravity_scale() {
+    return rpc("get_gravity_scale");
+}
+
+LiteArmValue Arm::save_gravity_scale() {
+    return rpc("save_gravity_scale");
+}
+
+LiteArmValue Arm::save_payload() {
+    return rpc("save_payload");
+}
+
+LiteArmValue Arm::save_installation() {
+    return rpc("save_installation");
+}
+
 // ── Peripheral devices ───────────────────────────────────────────────────────
 
 RemoteDevice Arm::device(const std::string& device_id) {
