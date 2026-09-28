@@ -1,462 +1,387 @@
-# litearm-cpp 开发指南与接口说明
+# litearm-cpp 开发者指南
 
-`litearm-cpp` 是 LiteArm 机械臂的 C++ 客户端 SDK（C++17），
-通过网络连接机械臂控制服务，适合低延迟嵌入式场景。**纯客户端，无运动学/动力学依赖**。
+LiteArm 机械臂的 C++ SDK —— 经 USB 串口直连固件。
 
-```text
-你的程序 ──→ 机械臂控制服务 ──→ 机械臂 / CAN
-```
-
----
+规划、运动学与动力学都在固件里; PC 侧只做三件事: **编解码帧**、**发命令**、**判到位**。
 
 ## 目录
 
-- [1. 环境要求与构建](#1-环境要求与构建)
-  - [1.1 安装 protobuf](#11-安装-protobuf)
-  - [1.2 构建](#12-构建)
-- [2. 快速开始](#2-快速开始)
-- [3. 连接管理](#3-连接管理)
-- [4. 值类型 LiteArmValue](#4-值类型-litearmvalue)
-- [5. 接口说明](#5-接口说明)
-  - [5.1 计算（不驱动电机）](#51-计算不驱动电机)
-  - [5.2 运动控制](#52-运动控制)
-  - [5.3 状态读取](#53-状态读取)
-  - [5.4 急停 / 使能](#54-急停--使能)
-  - [5.5 DIRECT 模式 —— 逐帧 MIT 直接控制](#55-direct-模式--逐帧-mit-直接控制)
-  - [5.6 参数调节](#56-参数调节)
-  - [5.7 外设设备](#57-外设设备)
-  - [5.8 系统 / 设置 / 轨迹 / 设备管理 / 遥操](#58-系统--设置--轨迹--设备管理--遥操)
-- [6. 异常处理](#6-异常处理)
-- [7. 安全提示](#7-安全提示)
-- [8. 与 litearm-python 对比](#8-与-litearm-python-对比)
+1. [模块地图](#1-模块地图)
+2. [线协议](#2-线协议)
+3. [读路径: 唯一读者 + 分队列](#3-读路径-唯一读者--分队列)
+4. [写路径: 唯一写口 + 两道钩子](#4-写路径-唯一写口--两道钩子)
+5. [笛卡尔: FIFO 配对与吸收额度](#5-笛卡尔-fifo-配对与吸收额度)
+6. [锁序](#6-锁序)
+7. [安全不变量](#7-安全不变量)
+8. [错误面](#8-错误面)
+9. [测试](#9-测试)
+10. [与 Python 版的对照](#10-与-python-版的对照)
 
-## 1. 环境要求与构建
+---
 
-| 项目 | 要求 |
-|---|---|
-| 编译器 | C++17（GCC 8+ / Clang 7+） |
-| CMake | 3.16+ |
-| Protobuf | 3.19+（headers、库、`protoc`） |
-| Google Test | 仅测试需要（自动下载） |
+## 1. 模块地图
 
-### 1.1 安装 protobuf
+| 头文件 | 对应 Python | 职责 |
+| --- | --- | --- |
+| `protocol.hpp` | `_protocol.py` | 帧编解码 / CRC16 / 常量 / 状态帧布局 / 版本解析 / 覆盖契约 |
+| `errors.hpp` | `errors.py` | 异常层级 + `(cmd, code)` 语义表 + `ERR` -> 异常的映射 |
+| `rot.hpp` | `_rot.py` | 旋转/位姿纯数学 (ZYX 内旋, 与固件 `kin.c` 同约定) + 位姿形态归一化 |
+| `state.hpp` | `state.py` | `RobotState` / `JointState` —— 状态帧的面向对象视图 |
+| `transport.hpp` | `transport.py` | 传输接口 + 真串口 (POSIX/Win32) + 端口发现 + 进程内端口登记 |
+| `ack.hpp` | `arm.py` 的 `_Ack` | **唯一读者** + 按 (上行 id, 回显码) 分队列 + `expect` |
+| `cart.hpp` | `cart.py` | 笛卡尔 FIFO 配对 / 吸收额度 / `CartPlan` / 三条入口 |
+| `arm.hpp` | `arm.py` | `Arm` 主类 / `Msg` / `LicenseInfo` / 零重力会话 / CLI |
+| `params.hpp` | `params.py` | 关节级参数 (0x22/0x23/0x24/0x36) |
+| `model.hpp` | `model.py` | 动力学模型在线导入 (0x30..0x39) |
+| `log.hpp` | `log.py` | 300Hz 采集 (0x2D/0x2E) |
+| `diagnostics.hpp` | `diagnostics.py` | 固件自检 (0x49) + 文本解析 |
+| `testing.hpp` | `testing.py` | 脚本化应答的假传输 —— 让全套测试离线可跑 |
+| `msg.hpp` | `arm.py` 的 `Msg` | 返回值信封 `{value, hz, timestamp}` |
 
-先检查版本：
+**设计边界** (刻意不做): 任意 `fk(q)` —— 固件 `CMD_GET_TCP` 只能算**当前反馈 q** 的位姿,
+没有"给 q 求位姿"的下行命令; 阻抗控制 —— 高级场景走 pylitearm + server。
+PC 侧不做规划、不做运动学, 重型计算本来就在固件里。
+
+---
+
+## 2. 线协议
+
+```
+帧:  SOF(0xA5)  CMD(1B)  LEN(1B)  PAYLOAD(0..255)  CRC16_LO  CRC16_HI
+CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, 无末异或), 覆盖 [SOF..PAYLOAD]
+```
+
+上行 100Hz 状态帧 (两种布局, 尾部 `joint_fault u16` 是固件 1.5.0 起新增的):
+
+| 布局 | 固件 | 长度 (7J / 1J) |
+| --- | --- | --- |
+| `4 + 21N` | ≤ 1.4.x | 151 / 25 |
+| `6 + 21N` | ≥ 1.5.0 | 153 / 27 |
+
+单关节 21B = `q f32 + dq f32 + tau f32 + t_mos f32 + t_coil f32 + err u8`。
+`flags` 的位分配: **bit0..5 = 安全 flag**, **bit6..8 = mode**, **bit9 = enabled**,
+**bit10 = cart_busy** —— 所以 `flag_names` 只看 bit0..bit5 (见 `protocol.cpp` 里那个
+`for (k = 0; k < 6; ++k)`; 把它改大就会让 mode/enabled/cart_busy 一起变成"故障位")。
+
+⚠ **两个双 ID**: `0x49` (下行 `CMD_KIN_BENCH` / 上行 `RSP_JOINT_PARAM`) 与
+`0x41` (下行 `CMD_GET_FIRMWARE` / 上行 `RSP_DETAIL`, 后者是**死登记**)。
+靠**方向**区分, 不可用单张 ID 表查。
+
+覆盖契约 `command_coverage()` (49 条) 是"固件每条已实现命令都有 SDK 入口"的断言载体,
+由 `tests/test_protocol.cpp` 逐条对表钉住。
+
+### 2.1 分帧器 `FrameReader` (`include/litearm/framing.hpp`)
+
+把字节流切成帧的那台状态机 (SOF 扫描 / 半帧窗口 / 噪声留痕) **单独一个类**,
+`SerialTransport` 的两条后端 (POSIX 与 Win32) **共用同一份**。
+
+⚠⚠ **它存在的唯一理由是消灭重复。** 从前两条后端**各写过一份**同样的状态机,
+代码里自称"与 POSIX 侧同一段逻辑" —— 那是**会漂的拷贝**, 而 Windows 那条分支在
+Linux 上**连编都编不了**, 漂了也不会有人当场发现。抽出来之后两条后端只剩 I/O,
+而这段逻辑**被编译、被单测** (`tests/test_framing.cpp` 9 条), 不再只能经 pty 间接验。
+
+⚠ **`feed()` 是"取走"语义, 不是"试试看"** —— 丢掉它的返回值就是丢掉那一帧, 症状极隐蔽
+(数据在流, 却一帧都读不出来)。实测**在同一个下午踩了两次**。标准用法:
+
+```cpp
+if (auto f = r.feed(chunk.data(), chunk.size())) return *f;   // 这一批里可能就有整帧
+while (auto f = r.feed(nullptr, 0)) { /* 处理 f */ }          // 再取空缓冲
+```
+
+⚠ `tick(now)` 返回**缓冲有没有被改动**: 改动过就要立刻重试装配 (刚丢掉的假帧头后面
+很可能就跟着一条真帧)。少了这个返回值, 调用方要么漏帧、要么空转。
+
+---
+
+## 3. 读路径: 唯一读者 + 分队列
+
+**全包只有一个地方碰 `transport->read_frame`**: `Ack::reader_loop`。它只有两条纪律:
+
+1. **只投递, 不判定** —— "这帧是谁的"由**队列**决定, 不由线程决定;
+2. **死了要响亮** —— 死因进 `reader_error` 并唤醒所有等待者, 绝不静默退出。
+
+帧的**归属 = 它落在哪条队列**, 键是 `(上行 id, 回显码或 kNoEcho)`:
+
+- 只有 `RSP_ACK` / `RSP_ERR` 的 `payload[0]` 是"原命令码", 所以只有它们需要第二维;
+  别的帧的 `payload[0]` 是**数据** (关节号 / item 索引 / 状态字节)。
+- 于是 `ACK{0x10}` 与 `ACK{0x11}` 天然落在**两条**队列里 —— 并发命令互吃应答这件事在
+  **结构上不可能发生**。
+
+三类特殊投递:
+
+| 帧 | 去处 | 理由 |
+| --- | --- | --- |
+| `RSP_STATUS` | **单槽** `state` + `status_seq++` | 100Hz **广播**帧。进队列会在 0.6s 内撑满 `kQueueMax`; 而"取走就没"的队列语义天生不适合广播 |
+| `RSP_CART_PLAN` | 锁**外**交给 `CartPending::on_reply` | 避免在全局锁里调另一个子系统的锁 |
+| 其它 | `queues[(id, echo)]` 队列 | 每条队列封顶 `kQueueMax`, 越界丢**最旧**并计 `dropped` |
+
+`expect(want, timeout, label, raise_on_err, echo_cmd, err_waits_for_ack)`:
+`want` 是 `ACK`/`ERR` 时 **`echo_cmd` 必填** (不给就分不清"我的 ACK"与"别人的 ACK");
+
+- `err_waits_for_ack=true`: 一条匹配 `echo_cmd` 的 `ERR` **不是终局** —— 继续等
+  `ACK{echo_cmd}`; 找到 ⇒ 那条 ERR 是**别人的** (本命令其实已被受理, 不抛);
+  窗口耗尽仍只有 ERR ⇒ 那条 ERR 就是本命令的, 抛它。
+  代价: **真被拒时要等满整个窗口**。所以只有笛卡尔三条入口开这个开关。
+
+⚠ **这条"受理必回 ACK、拒绝绝不补 ACK"的形状只在生成侧成立, 到达侧不是**:
+受理那条 `ACK{cmd}` **自己也会丢** (固件应答 FIFO 满时丢最新)。
+
+### 三种读者
+
+| 类型 | 取帧口 | 例子 |
+| --- | --- | --- |
+| 队列等待者 | `Ack::wait` (在指定队列上等) | `expect` / `enable` / 参数读回 |
+| 驱动型读者 | `Arm::pump_until` (**一条帧都不认领**) | `read_status` / `get_status_now` / `wait_settled` |
+| 事件等待者 | `token` 上的条件变量 | `CartPending::wait` |
+
+驱动型读者是"广播帧不进队列"这条设计的必然结果: 它只是**等单槽前进**, 于是多个并发
+`get_state()` 不再互相饿。
+
+---
+
+## 4. 写路径: 唯一写口 + 两道钩子
+
+`Arm::raw_write` 是**所有**下行帧的唯一出口 (含零重力保活线程, 它刻意绕过
+`write_cmd` 的零重力守卫, 但**不该**绕过清队)。钩子顺序是承重的:
+
+```
+① fork 守卫 / 终态守卫   —— 结构性保证"子进程零下发""终态不再发帧"
+② 清队 (cart_->clear_pending)  —— 必须在 drain_for **之前**
+③ drain_for(cmd)         —— 必须在写**之前**
+④ tr_->write_frame(...)
+```
+
+- **③ 为什么必须在写之前**: 我们的应答只可能在写**之后**到达, 故此刻清队不可能吃掉自己的
+  应答。反过来 (先写后清) 会 100% 吃掉。
+
+⚠⚠ **2026-09-28: 这里原来还有一道"同帧节流" (排在 ② 之前), 已整套删除。**
+它当年排在清队之前有射程 (清队的理据是"固件**收到**这条命令才会作废在途规划", 而帧被丢掉时
+固件状态一点没变)。删掉之后**那条射程自动消失** —— 唯一写口的新不变式是
+「**进了这个函数就一定会写出去**」, "清队了但帧没发"这种半状态**不可构造**。
+见 README「与原版的差异」①。
+
+上层两个出口:
+
+| 出口 | 零重力守卫 | 用途 |
+| --- | --- | --- |
+| `write_query` | 无 | **查询类** (get_tcp/get_ik/参数读回/采集/自检) —— 拖动示教期间仍应能读状态 |
+| `write_cmd` | **有** (可 `guarded=false` 关掉) | **动作类**。`guarded=false` 只给降能量方向的动作 (急停/失能) —— 它们必须永远可达 |
+
+---
+
+## 5. 笛卡尔: FIFO 配对与吸收额度
+
+固件原生笛卡尔 (`0x3A/0x3B/0x3E`) 的应答载荷里**没有命令 id**, 只能按**受理顺序**
+FIFO 配对; 而固件那份应答只有**一个槽位** ⇒ 同一排空窗口内登记 ≥3 条时, 中段请求零应答。
+
+三条入口 (`move_l` / `move_c` / `move_path`) **全程持串行锁**: 从登记 token 一直持到
+`0x4E` 配对完成; `wait=true` 时**再持到停稳**。
+
+### 两条守卫
+
+**"多了一条"** (队列空却收到 `0x4E`): 计数 + 抛基类 `LiteArmError`。
+不给它专门的异常类型是刻意的 —— 那是**配对模型与固件脱同步**, 内部不变量被破坏,
+没有任何调用方能据它做出正确决定, 也**不该被专门 catch**。
+
+**"少了一条"** (token 超时没收尾): 摘除该 token 并抛 `CartReplyLostError` (**不是**
+`MotionTimeoutError` —— 这里要表达的是"未知结局", 混进通用超时会让调用方按"没生效"去重发)。
+
+### 吸收额度
+
+清队/放弃一条 token 时, 固件那条应答**可能已经在路上**。不留额度的话, 它一到就撞上
+"队列空"判据 ⇒ `LiteArmError` 从**毫不相干的读路径**炸出来。
+
+额度 = 摘掉的条数, 存活 `absorb_ttl = max(move_timeout, 12.0)` 秒。
+
+⚠ **两个方向都会出错**:
+
+- **取大** ⇒ 一条真·脱同步的应答被静默吸收 (硬错误降级成**静默**);
+- **取小/过期** ⇒ 一条还在路上的应答撞上"队列非空"而被配给**新登记**的 token ⇒
+  调用方拿到**别人那条**的结果并**报成功** = **假成功**。
+
+两害相权必须**偏向取大**。下限 12.0s 的固件依据是三段相加 (规划 3s + 擦写停顿 8s +
+链路 1s), 逐段出处见 `cart.hpp` 里 `kAbsorbTtlFloor` 的注释。
+
+**清队的两条正确性条件**:
+
+- `n == 0` 时**不刷新截止** —— 零重力保活每 40ms 发一条清队 opcode (几乎永远是空清队),
+  若空清队也刷新截止, 额度就**永远不过期**;
+- 额度**跨多次清队累加** —— 写成"重置为本次条数"的话, 上一次那条待吸收的迟到应答会退化
+  成硬错误。
+
+**`drop_and_absorb` 的唯一例外**: `timed_out == true` 且本条请求的窗口里**已经消费过额度**
+⇒ **不补** (吸收**先于**配对, 所以被吃掉的就是它自己那条; 再补就会**自持** ——
+实测改前能让新会话此后每一条笛卡尔命令都报"结局未知")。
+⚠ 这条例外**只对超时支成立**: pump 支 (读链路当场就炸) 根本没等过窗口, 那句前提在它身上
+没有依据。
+
+---
+
+## 6. 锁序
+
+```
+cart_serial_  →  CartPending::lock_  →  transport::wlock_
+zg_lock_      →  CartPending::lock_  →  transport::wlock_
+```
+
+**反向无环**, 判据是"下层都不知道上层": `CartPending` 与 `SerialTransport` 都不引用
+`cart_serial_` / `zg_lock_`。
+
+- `cart_serial_` 是 **`std::recursive_mutex`** —— 嵌套点只有一个: `move_path` 把
+  `BEGIN + ADD×n + RUN` 整段圈进本锁, 而 RUN 那一段本身也走 `request_and_wait`。
+- `zg_lock_` 只串行化启停; **保活线程不取它** (它取 `zg_err_mu_`) ——
+  否则会与"持着 `zg_lock_` 等 join"的 `zero_g_stop` 死锁。
+- **`emergency_stop`/`disable`/`zero_g*`/`get_tcp` 自己不许获取 `cart_serial_`** ——
+  降能量方向的动作与只读查询必须永远可达 (持锁者可能阻塞到 `move_timeout`)。
+  ⚠ 但**入口在自己的临界区里调用 `get_tcp()` 是另一回事**: `move_c` 的起点校验就是那样。
+- `Ack::mu` 是**叶子锁的加强版**: 只在 `deliver`/`wait` 内部持有, 且 `deliver` 里
+  **不调用任何子系统** (`on_reply` 刻意留在锁外)。
+
+---
+
+## 7. 安全不变量
+
+逐条都有测试钉着:
+
+1. **fork 的子进程零下发** —— `ForkedSessionError` 挂在三个结构性收口
+   (`require` / `Ack::wait` / `raw_write`) 上, 而不是逐入口枚举。
+   子进程里的 `close()` **故意泄漏** `Ack` 与传输层两个句柄。三条**独立**的死锁,
+   各自实测过: ① `SerialTransport::close()` 要取的读锁很可能正被父进程的读线程持着;
+   ② `join()` 一条在子进程里**不存在**的线程会永久阻塞;
+   ③ ⚠ 最隐蔽的一条 —— 析构一个**有人停在上面的** `std::condition_variable`
+   (`Ack::stop_cv_`) 会永久阻塞 (glibc 组切换要取 condvar 的内部锁, 而那把锁与已不存在的
+   等待者绑在一起)。③ 在**成员析构**里, 躲不掉 ⇒ 调用方必须**根本不析构**那个对象。
+   见 `src/arm.cpp` 里 `close()` 的 fork 分支与 `Ack::~Ack()` (那里有最小复现的描述)。
+
+   **推论 (写给下一个加线程的人)**: 任何"子进程里可能被析构、且持有 condvar"的对象都有
+   这个形状。新增这类成员之前先想清楚它在 fork 之后会不会被谁析构。
+2. **终态零下发** —— `enter_dfu` 确认设备消失后置位, 之后每个入口抛 `ArmIsInDfuError`。
+3. **写失败 ⟹ 整帧未送达** —— `write_frame` 把 `write()` 抛与 `flush()` 抛**分开报**:
+   前者抛 `TransportError`, 后者**不抛** (整帧已在驱动里, 失败收不回来), 只计
+   `flush_failures`。这条不变量是 `CartPending::request` 能安全摘 token 的前提。
+4. **`RSP_CART_PLAN` 应答里没有命令 id** ⟹ 任何 FIFO 方案必有一支判错 ⟹ 只能选
+   **判错得安全**的那一支: 宁可报"结局未知", **绝不报"成功"**。
+5. **到位 ≠ 停止** —— `CartPlan::settled` 要两条一起成立: 判到位收的尾 **且**
+   到位判据满足**之后**回读的**实际 TCP** 与目标对得上。只看 `bit10` 会把"中途被扯断、
+   TCP 根本不在目标上"报成到位。
+6. **零重力期拒绝动作命令, 但放行查询与降能量动作** —— 两处抛出点共用**同一个常量**
+   (`ZERO_G_GUARD_MESSAGE`), 改一处不会静默漂移。
+7. **`0x00` 恒等于"固件没有这条命令"** —— 它是唯一稳定的哨兵, 比版本号可靠。
+8. **不可逆命令不代劳** —— `save_params` / `reset_factory` / `model.commit` 都要求调用方
+   自己先 `disable()`, 库不替调用方做安全决策。
+
+---
+
+## 8. 错误面
+
+```
+LiteArmError                     本包所有错误
+├─ NotConnectedError             未连接 / 链路已关
+│  └─ ForkedSessionError         子进程里沿用父会话 (fail-closed)
+├─ TransportError                串口读写 / 帧 CRC / 链路丢失
+├─ FirmwareMismatchError         版本不符合约定或过旧
+├─ InvalidCommandError           参数/命令非法
+├─ MotorFaultError               状态帧 FAULT / EMERGENCY / 单轴断轴
+├─ MotionTimeoutError            move 超时未到位
+├─ IKError                       IK 失败
+├─ CommandRejectedError          固件显式 ERR{cmd, code}
+│  └─ UnsupportedByFirmwareError ERR code == 0x00 ("固件没这条命令")
+├─ CartesianPlanError            规划被拒 (IK/共线/超容量/越限) —— 臂一步没动
+├─ MotionSupersededError         被新请求取代 (预期内的接管, **不是失败**)
+├─ CartReplyLostError            0x4E 丢了 —— 结局未知
+├─ ArmIsInDfuError               会话终态
+└─ NotRemoteable / NotSupportedOnThisBackend / TeleopLockedError / TeleopBusyError
+```
+
+三条**刻意不继承**的关系 (都有测试钉着):
+
+- `MotionSupersededError` **不**继承 `CartesianPlanError` —— 混进"规划失败"会让正常抢占
+  走成故障分支;
+- `CartesianPlanError` **不**继承 `CommandRejectedError` —— 固件这里回的是**规划结果**,
+  不是 `ERR{cmd, code}` 形态, 硬套会凭空多出语义错误的 `cmd`/`code` 字段;
+- `ArmIsInDfuError` **不**继承 `NotConnectedError` —— 后者语义是"连上即可", 而终态不是
+  一次可恢复的掉线 (混在一起会让"断连就重连"的逻辑把 DFU 当普通掉线)。
+
+`err_reason(cmd, code)` 是 `(cmd, code)` 的**唯一**解读处, 三级查找:
+
+1. 具体档 `err_text()` 命中 ⇒ 用它 (同一个 `0x03` 在 `0x01`/`0x10`/`0x23` 上语义不同);
+2. 通用档命中 ⇒ 用它 **并附上原始码**;
+3. 都没有 ⇒ 明说"未登记", **带上原始 cmd/code**。
+
+第 2/3 档之所以必须带原始码: 固件新增一档错误码时, 这条路径就是**唯一**会让上位机看见
+"这是我没见过的码"的地方。
+
+---
+
+## 9. 测试
 
 ```bash
-protoc --version    # 需 "libprotoc 3.19" 或更新版本
+./build.sh                       # 构建 + ctest
+./build.sh --asan                # AddressSanitizer + UBSan
+ctest --test-dir build -R test_cart -V
+./build/tests/... --filter movej # 单文件内按名字过滤 (每个 test_*.cpp 是独立可执行文件)
 ```
 
-若未安装或版本过低，按需选择一种方式：
+| 测试 | 覆盖 |
+| --- | --- |
+| `test_protocol` | CRC (标准检查值 + 独立参考实现) / 组帧解帧 / 版本解析 / 开机签名 / 两种状态帧布局 / 覆盖契约逐条对表 |
+| `test_rot` | rpy<->矩阵 / 万向锁 / SO(3) 对数指数 / slerp / 姿态误差方向 / 三种位姿写法 |
+| `test_errors` | 层级关系 / 三级查找 / 白名单 / `ERR` -> 异常的类型映射 |
+| `test_state` | enabled/cart_busy/faulted/断轴/`drop_hold_inferred` |
+| `test_transport` | **真 pty**: 逐字节往返 / 噪声跳过与留痕 / 坏帧重同步 / 半帧跨调用保留 / `timeout=0` 的"有就给我" / 假帧头超时丢弃 / 端点独占 / 失败路径释放登记 |
+| `test_framing` | 分帧器**直接**单测 (不再只能经 pty 间接测): 一次喂多帧取空 / 跨调用半帧 / 噪声留痕与封顶 / 假帧头超时 / 坏帧重同步 / `reset` |
+| `test_register` | 《未验证登记册》的格式守门: 五列 / 每条都有出处 / id 恰好 1..N / 没有丢了行首 `\|` 的隐形行 |
+| `test_packaging` | 卖出去之前能守住的那几类: 版本单一口径 / 公开头的兄弟头都在装出去的目录里 / 打包模板在 |
+| `test_arm_assembly` | 握手 / 版本拒绝 / 幂等 connect / 改靶 / 收尾 / DFU 终态四条路径 |
+| `test_commands` | 使能重试白名单 / 安全命令 / 关节运动与到位 / 伺服透传 arity / 状态读取 / IK |
+| `test_ff` | 0x26/0x27/0x28/0x31 + 0x2B/0x2C 读回 / item 表 |
+| `test_params` | 0x22/0x23/0x24/0x36 + 武装门禁 |
+| `test_model` | 探测 / staging-bank-commit 三层 / 掩码逐位 / 需失能 |
+| `test_log` | 样本布局 / 游标续读 / 掉帧重试 / 游标不前进的死循环保护 / 逐拍记录模型 |
+| `test_diagnostics` | 计时行 (名字与数字相连) / LINK 行 (**名字带数字的键**) / 两帧收齐 / 旧固件兼容 |
+| `test_cart` | `CartPlan` / 异常映射 / 三条入口 / **FIFO 配对** / **吸收额度两个方向** / 清队 / 能力探测 |
+| `test_zero_g` | 保活线程 / 双向守卫 / RAII / 保活中断可见 / close 停线程 |
+| `test_license` | 26B 记录 / 未激活 / `0x02` 聚合档的回读定性 / 未授权时的使能门禁 |
+| `test_threading` | 并发状态读者 / 并发笛卡尔入口串行 / close 唤醒等待者 / `Msg.hz` 语义 / 唯一写口无丢弃路径 |
+| `test_precheck` | 客户端预检 (非有限值 / 软限 / 速度 / 容差) 与软限缓存的两条纪律 |
+| `test_accessors` | 七个只读诊断访问器 (含终态下不抛、以及包装层转发链) |
+| `test_clock` | 可注入时间源: 默认是真钟 / 注入可见 / 假钟下"超龄判失联"确定性可验 |
+| `test_frame_ownership` | **帧归属**: 唯一读口 (源码扫描) / 归属判据 / 两线程互不吃应答 / 陈旧帧清队 / 队列封顶 / 守卫 |
+| `test_full_coverage` | **命令覆盖动态哨兵** (每条已实现命令都真发出去过) / 无多余 id / 公开成员名单守卫 / 未连接时的错误类型全扫 |
+| `test_protocol_sync` | **与固件头文件双向比对** —— **需 `LITEARM_FW_DIR`, 否则 SKIP** (见 §9 末) |
+| `test_fork_guard` | 真 `fork()`: 子进程零下发 / 收尾不挂 |
 
-```bash
-# Debian / Ubuntu（24.04+ 自带 protobuf 3.21）
-sudo apt update && sudo apt install -y protobuf-compiler libprotobuf-dev
+**全部离线** —— 用 `testing::FakeTransport` (按命令脚本化应答的假传输)。
+串口本身用**真 pty** 测: 桩会把 `timeout` 整个忽略掉, 于是"`read_frame(0)` 其实一个字节
+都不碰"这类缺陷在桩上全绿 (上游就这么漏掉过一次真机故障)。
 
-# 或 conda（任意系统）
-conda install -c conda-forge protobuf=3.19.6
+**唯一的例外**是 `test_protocol_sync`: 它要读**固件仓库**的源码, 找不到时**SKIP**
+(`LITEARM_FW_DIR`, 默认 `~/litearm-stm32`)。帧归属那套里还有两处**源码扫描**判据
+(唯一读口、公开成员名单) —— 它们用 `lt::repo_root()` 从 `__FILE__` 推路径, 与当前工作
+目录无关 (ctest 的 cwd 是构建目录, 相对路径在那边打不开 —— 实测踩过)。
 
-# 或源码编译（任意系统）
-cd /tmp
-curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.6/protobuf-cpp-3.19.6.tar.gz
-tar xzf protobuf-cpp-3.19.6.tar.gz && cd protobuf-3.19.6
-./configure && make -j$(nproc) && sudo make install
-sudo ldconfig
-```
+⚠ **SKIP 不是通过**: 报告里单独计数并逐条打印。看到"N 跳过"就说明那部分**没测**。
 
-### 1.2 构建
+---
 
-```bash
-mkdir build && cd build
-cmake ..                      # 系统安装的 protobuf 会被自动找到
-cmake --build . -j$(nproc)
-ctest --output-on-failure     # 运行测试
-```
+## 10. 与 Python 版的对照
 
-protobuf 在自定义前缀（例如已激活的 conda 环境）时：
+移植是**逐条对照**的: 同一个常量值、同一句错误文案、同一个判据顺序。
+语言层的差异只有这些:
 
-```bash
-cmake .. -DPROTOBUF_ROOT=$CONDA_PREFIX
-```
-
-## 2. 快速开始
-
-```cpp
-#include <litearm/arm.hpp>
-
-int main() {
-    auto arm = litearm::Arm("tcp/192.168.1.100:7447", "armA");
-
-    auto state = arm.get_state();                 // std::optional<RobotState>
-    if (state) {
-        auto& q = state->q;                        // 关节位置
-    }
-
-    arm.movej({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, /*speed=*/0.5);
-    auto [pos, rot] = arm.fk({0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
-
-    arm.request_stop();                            // 高优先级急停
-    arm.close();
-    return 0;
-}
-```
-
-## 3. 连接管理
-
-```cpp
-litearm::Arm arm("tcp/127.0.0.1:7447", "armA",
-                 /*transport=*/nullptr);   // 可选预配置连接（高级用途）
-arm.close();                               // 关闭连接
-```
-
-- `Arm` 不可拷贝、可移动；`arm_id()` 返回机械臂标识。
-- `get_state(refresh=false)` 同步读取状态缓存，未收到返回 `std::nullopt`。
-
-## 4. 值类型 LiteArmValue
-
-接口参数/返回值统一用动态值类型 `LiteArmValue`（tagged union），构造与访问：
-
-```cpp
-using litearm::LiteArmValue;
-
-LiteArmValue v = LiteArmValue::from_vec({0.1, 0.2});            // vector<double> → List
-LiteArmValue m = LiteArmValue::from_mat({{1,0,0},{0,1,0},{0,0,1}});  // 嵌套 → List<List>
-
-double x  = v.as_list()[0].as_double();        // 访问
-auto vec  = v.to_vec();                        // 提取 vector<double>
-auto mat  = m.to_mat();                        // 提取 vector<vector<double>>
-auto cfg  = LiteArmValue::make_map({{"type", LiteArmValue("gripper")}});
-```
-
-`Kind` 枚举：`Null / Bool / Int / Double / String / Bytes / List / Map`。便捷别名 `Vec7`、`Mat3x3`。
-
-## 5. 接口说明
-
-> 运动类方法返回 `bool`；纯计算返回数据；其他接口返回 `LiteArmValue`。
-
-### 5.1 计算（不驱动电机）
-
-| 方法 | 说明 |
-|---|---|
-| `fk(q)` | 正运动学 → `(位置, 旋转矩阵)` |
-| `ik(pos_d, R_d, q_seed=nullopt)` | 逆运动学 → `(q, 是否成功)` |
-| `plan_movel(q_start, pose_goal)` | 直线笛卡尔路径规划 → 关节路径 |
-| `plan_movec(q_start, pose_via, pose_goal)` | 圆弧路径规划（过中间点） |
-| `plan_movep(q_start, poses_goal)` | 多航点路径规划 |
-
-### 5.2 运动控制
-
-| 方法 | 说明 |
-|---|---|
-| `movej(q_target, speed=1.0, settle_s=1.0, max_cycles=nullopt, allow_start_collision_recovery=false)` | 关节空间点到点 |
-| `home(speed=0.3, settle_s=0.5, max_cycles=nullopt)` | 回零：所有关节归零，绕开限位和自碰路径检查 |
-| `recover_joint_limits(speed=0.05, settle_s=0.5, max_cycles=nullopt, inset_rad=0.0)` | 越限关节缓慢回安全边界（需 server `allow_limit_recovery=True`） |
-| `movel(pose_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 笛卡尔直线 |
-| `movec(pose_via, pose_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 笛卡尔圆弧 |
-| `movep(poses_goal, speed=1.0, settle_s=0.8, max_cycles=nullopt)` | 多航点带拐角平滑 |
-| `replay_joint_path(q_path, speed=1.0, settle_s=0.5, goto_start=true, goto_speed=0.3, max_cycles=nullopt)` | 回放关节序列 |
-| `replay_trajectory(traj, speed=1.0, goto_start=true, goto_speed=0.3, max_cycles=nullopt, check_singularity=true)` | 回放 `JointTrajectory`（另有 `LiteArmValue` 重载） |
-| `replay_timed_trajectory(traj_q, traj_t, speed=1.0, goto_start=true, goto_speed=0.3, simplify_tolerance_rad=0.01, max_cycles=nullopt)` | 按原始时间轴回放（自动拉伸保安全） |
-| `play_trajectory(trajectory, speed=1.0, goto_start=true, goto_speed=0.3, verify_robot=true, simplify_tolerance_rad=0.01, max_cycles=nullopt)` | 回放已保存轨迹（`JointTrajectory` 或 server 侧路径字符串，双载） |
-| `record_trajectory(output="trajectories", duration_s=nullopt, sample_rate_hz=100.0, filter_alpha=0.15, name=nullopt)` | 拖动录轨迹 → `JointTrajectory` |
-| `hold(kp_scale=3.0, max_cycles=nullopt)` | 提高刚度持位 |
-| `zero_gravity(max_cycles=nullopt, duration_s=nullopt, measured_overspeed_factor=nullopt, vel_max=nullopt)` | 零重力（自由拖动）模式 |
-| `joint_impedance(q_des, K, B, tau_max=nullopt, engage_sec=0.3, max_cycles=nullopt)` | 关节空间阻抗控制 |
-| `cartesian_impedance(q_des, K_cart, B_cart, v_des=nullopt, tau_max=nullopt, engage_sec=0.3, max_cycles=nullopt, sigma_min_thresh=nullopt, max_ori_err=nullopt, measured_overspeed_factor=nullopt, vel_max=nullopt)` | 笛卡尔空间阻抗控制 |
-| `joint_follow(K=nullopt, B=nullopt, speed_limit=nullopt, accel_limit=nullopt, engage_sec=0.3, max_cycles=nullopt, duration_s=nullopt)` | 跟随外部目标 |
-
-### 5.3 状态读取
-
-| 方法 | 说明 |
-|---|---|
-| `get_state(refresh=false)` | 状态缓存最近状态（`std::optional<RobotState>`，同步） |
-| `get_tcp_pose()` | 当前 TCP 位姿 → `(位置, 旋转矩阵)` |
-
-`RobotState` 字段：`q / dq / tau / faults / errs / temps / state / feedback / watchdog / robot_serial / config_checksum_sha256`。
-
-### 5.4 急停 / 使能
-
-| 方法 | 说明 |
-|---|---|
-| `request_stop()` | 高优先级急停（独立急停通道） |
-| `clear_stop()` | 清除停止状态回到就绪 |
-| `enable()` | 使能全部电机并锁住当前姿态 |
-| `disable()` | ⚠️ 失能全部电机（机械臂会掉臂！），CAN 保持连接 |
-
-### 5.5 DIRECT 模式 —— 逐帧 MIT 直接控制
-
-> DIRECT 模式是 LiteArm 的逐帧 MIT 直接控制通道。通过 `send_mit` 以 250Hz 典型频率
-> 发送五参数 (kp/kd/q_ref/dq_ref/tau_ff) 实时控制关节电机，内置 4 条永不关闭的核心安全护栏。
-
-**与普通运动控制的区别：**
-
-| 特性 | 普通运动控制 (`movej` 等) | DIRECT 模式 (`send_mit`) |
+| 主题 | Python | C++ |
 | --- | --- | --- |
-| 控制方式 | 目标位置 + 速度，自动规划 | 逐帧五参数 MIT 命令 |
-| 帧率 | 一次调用，自动执行 | 用户循环控制（典型 250Hz） |
-| 阻塞 | 阻塞，等运动完成 | 非阻塞，立即返回 |
-
-**进入与退出：**
-
-- **进入**：首次调用 `send_mit` 时自动进入 DIRECT 模式
-- **退出**：`request_stop()` 主动退出 / 看门狗超时自动回 hold / 电机故障自动退出
-
-#### send_mit —— 发送 MIT 控制帧
-
-**Description:** 异步 pub 五参数 MIT 控制帧到机械臂命令通道。非阻塞，立即返回。首次调用自动进入 DIRECT 模式。
-
-**Function Definition:**
-
-```cpp
-void send_mit(
-    const std::vector<double>& kp,      // 长度 7，位置刚度
-    const std::vector<double>& kd,      // 长度 7，速度阻尼
-    const std::vector<double>& q_ref,   // 长度 7，目标关节角度 (rad)
-    const std::vector<double>& dq_ref,  // 长度 7，目标角速度 (rad/s)
-    const std::vector<double>& tau_ff   // 长度 7，前馈力矩 (N·m)
-);
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `kp` | `const std::vector<double>&` | 位置刚度，长度 7，范围 `[0, 500]`。典型值 15–200 |
-| `kd` | `const std::vector<double>&` | 速度阻尼，长度 7，范围 `[0, 5]`。典型值 0.5–3.0 |
-| `q_ref` | `const std::vector<double>&` | 目标关节角度（rad），长度 7。相邻帧跳变受斜率限制 |
-| `dq_ref` | `const std::vector<double>&` | 目标角速度（rad/s），长度 7。被 clamp 到 `±DQ_MAX` |
-| `tau_ff` | `const std::vector<double>&` | 前馈力矩（N·m），长度 7。被 clamp 到 `±min(guards_tau_max, TAU_MAX)` |
-
-**Return Value:** `void` — 异步发送，不等待回执。
-
-**Usage Example:**
-
-```cpp
-// 发送单帧（自动进入 DIRECT 模式）
-arm.send_mit(
-    {50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0},
-    {1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
-);
-```
-
-#### set_guards —— 配置全局护栏
-
-**Description:** 全局一次性配置护栏参数（RPC）。所有参数为 `std::optional`，`std::nullopt` 表示不改变。**全局持久**：退出 DIRECT 后不重置。
-
-**Function Definition:**
-
-```cpp
-LiteArmValue set_guards(
-    std::optional<double> slew_limit = std::nullopt,
-    std::optional<double> tau_max = std::nullopt,
-    std::optional<double> watchdog_timeout = std::nullopt,
-    std::optional<bool> position_bounds = std::nullopt,
-    std::optional<bool> velocity_bounds = std::nullopt,
-    std::optional<bool> jerk_limit = std::nullopt
-);
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `slew_limit` | `std::optional<double>` | 全局斜率限制（rad/s）。`std::nullopt` = 不改变 |
-| `tau_max` | `std::optional<double>` | 全局力矩上限（N·m）。`std::nullopt` = 不改变 |
-| `watchdog_timeout` | `std::optional<double>` | 看门狗超时（秒），范围 `[0.05, 2.0]` |
-| `position_bounds` | `std::optional<bool>` | 是否开启位置软限位。默认 `false` |
-| `velocity_bounds` | `std::optional<bool>` | 是否开启速度软限位。默认 `false` |
-| `jerk_limit` | `std::optional<bool>` | 是否开启加加速度限制。默认 `false` |
-
-**Return Value:** `LiteArmValue` — RPC 回复值。
-
-**Usage Example:**
-
-```cpp
-// 组合配置
-arm.set_guards(1.0, 10.0, 0.10, true);
-// slew_limit=1.0, tau_max=10.0, watchdog_timeout=0.10, position_bounds=true
-
-// 仅修改单个参数
-arm.set_guards(std::nullopt, std::nullopt, 0.05);  // 仅收紧看门狗到 50ms
-```
-
-#### get_guards —— 读取当前护栏配置
-
-**Description:** 读取当前生效的护栏配置（RPC 同步）。
-
-**Function Definition:**
-
-```cpp
-LiteArmValue get_guards();
-```
-
-**Return Value:** `LiteArmValue` — 包含 6 个字段的 map。
-
-**Usage Example:**
-
-```cpp
-auto guards = arm.get_guards();
-auto kw = guards.as_map();
-std::cout << "slew_limit = " << kw["slew_limit"].as_double() << " rad/s\n";
-```
-
-#### 完整控制循环示例
-
-```cpp
-/** DIRECT 模式 250Hz 控制循环 —— 正弦波扫关节1。 */
-#include <chrono>
-#include <cmath>
-#include <iostream>
-#include <thread>
-#include <vector>
-#include <signal.h>
-#include "litearm/arm.hpp"
-#include "litearm/transport.hpp"
-
-static volatile sig_atomic_t running = 1;
-void handle_signal(int) { running = 0; }
-
-int main() {
-    signal(SIGINT, handle_signal);
-
-    constexpr double DT = 0.004;   // 4ms → 250Hz
-    constexpr double FREQ = 0.5;
-    constexpr double AMP = 0.5;
-    constexpr int N = 7;
-
-    auto tp = std::make_shared<litearm::ZenohTransport>("tcp/192.168.1.100:7447");
-    litearm::Arm arm("", "armA", tp);
-
-    // 配置护栏（一次性）
-    arm.set_guards(2.0, 20.0, 0.10, true);
-
-    double t = 0.0;
-    while (running) {
-        auto loop_start = std::chrono::steady_clock::now();
-
-        std::vector<double> q_ref(N, 0.0);
-        q_ref[0] = AMP * std::sin(2.0 * M_PI * FREQ * t);
-
-        arm.send_mit(
-            std::vector<double>(N, 50.0),
-            std::vector<double>(N, 1.5),
-            q_ref,
-            std::vector<double>(N, 0.0),
-            std::vector<double>(N, 0.0)
-        );
-
-        t += DT;
-        auto elapsed = std::chrono::steady_clock::now() - loop_start;
-        auto sleep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::duration<double>(DT) - elapsed);
-        if (sleep_ns.count() > 0) std::this_thread::sleep_for(sleep_ns);
-    }
-
-    arm.request_stop();
-    std::cout << "已退出 DIRECT 模式" << std::endl;
-    return 0;
-}
-```
-
-#### 安全护栏说明
-
-| 护栏 | 说明 | 可关闭？ |
-| --- | --- | --- |
-| **护栏1：协议参数 clamp** | kp≤500、kd≤5、dq_ref≤DQ_MAX、tau_ff≤TAU_MAX | 不可关闭 |
-| **护栏2：命令通道斜率限制** | 相邻帧 q_ref 跳变 ≤ slew_limit × dt，dt 有上界 0.10s | 不可关闭，`slew_limit` 可收紧 |
-| **护栏3：看门狗 fail-soft** | 命令中断超时自动回 hold | 不可关闭，`watchdog_timeout` 可调 |
-| **护栏4：单一所有权** | DIRECT 激活时拒绝运动命令和遥操 | 不可关闭 |
-| **位置限制（附加）** | q_ref 逐帧 clamp 到关节软限位 | 默认关，`position_bounds: true` 开启 |
-| **速度限制（附加）** | dq_ref 逐帧 clamp 到 `±DQ_MAX` | 默认关，`velocity_bounds: true` 开启 |
-| **加加速度限制（附加）** | dq_ref 变化率受限 | 默认关，`jerk_limit: true` 开启 |
-
-> **安全底线：机械臂永远不允许乱飞。** 命令通道斜率限制 + 单一收口 + 看门狗 fail-soft + 固件兜底。
-
-### 5.6 参数调节
-
-| 方法 | 说明 |
-|---|---|
-| `set_gains(kp=nullopt, kd=nullopt)` / `get_gains()` | PD 增益设置/读取 |
-| `clear_faults()` | 清除电机故障 |
-| `set_payload(mass, com={0,0,0})` / `get_payload()` | 末端负载（质量 + 质心） |
-| `set_installation(base_rpy=nullopt, gravity=nullopt)` / `get_installation()` | 安装姿态（基座 RPY 或重力向量） |
-
-### 5.7 外设设备
-
-```cpp
-auto hand = arm.device("hand_0");          // RemoteDevice
-hand.open(); hand.close();                 // 开/合
-hand.set_force(0.5);                       // 抓取力
-hand.set_gesture("pinch"); hand.list_gestures();
-hand.finger_move({0.1, 0.2, 0.3, 0.4, 0.5, 0.6});
-hand.set_speed({...}); hand.set_torque({...});
-hand.get_state();
-
-auto gripper = arm.device("gripper_0");
-gripper.set_width(0.5); double w = gripper.get_width();
-
-auto teach = arm.device("teach_0");
-teach.get_joints(); teach.get_buttons();
-
-// 通用：get_status / get_info / connect / disconnect / clear_faults
-// 设备管理器：arm.devices()["hand_0"] 等价于 arm.device("hand_0")
-```
-
-`RemoteDevice::call(method, kwargs)` 可调用任意设备方法，自动加 `device.{id}.` 前缀。
-
-### 5.8 系统 / 设置 / 轨迹 / 设备管理 / 遥操
-
-均返回 `LiteArmValue`：
-
-| 分组 | 方法 |
-|---|---|
-| 系统 | `get_system_stats()`、`get_logs(page=1, size=50, search="")`、`restart_service()`、`reconnect()` |
-| 设置 | `get_joint_limits/set_joint_limits(limits)`、`get_zero_offsets/set_zero_offsets(offsets)`、`get_end_effector/set_end_effector(config)`、`get_cartesian_limits/set_cartesian_limits(limits)`、`get_collision_config/set_collision_config(config)` |
-| 轨迹 | `start_recording/stop_recording/discard_recording/get_recording_state/get_playback_state/list_trajectories/save_trajectory(id,name,points,duration=nullopt)/delete_trajectory(id)` |
-| 设备 | `list_device_types()`、`connect_device(category, subtype, device_id="end_0", can_iface="", config={})`、`disconnect_device(device_id="end_0")`、`get_active_device(device_id="end_0")` |
-| 遥操 | `enter_teleop(mode, params={})`、`exit_teleop()`、`get_teleop_status()` |
-
-> 遥操态下服务端拒绝一切手动控制指令，只放行只读 / 急停 / `exit_teleop`。
-
-## 6. 异常处理
-
-所有异常继承 `LiteArmError`（`std::runtime_error` 子类），服务端异常原样抛出。
-
-```cpp
-#include <litearm/exceptions.hpp>
-
-try {
-    arm.movej(...);
-} catch (const litearm::SafetyViolationError& e) {   // 超时/跟随/故障/看门狗
-    // e.details 为 unordered_map<string,string>
-} catch (const litearm::LiteArmError& e) {           // 兜底
-    std::cerr << e.what();
-}
-```
-
-常用类型：`NotConnectedError`、`ConfigurationError`、`InvalidCommandError`、`CartesianPlanError`、
-`MotionTimeoutError`、`MotorFaultError`、`ArmFault`、`WatchdogError`、`MotionCancelled`。
-
-## 7. 安全提示
-
-- ⚠️ `disable()` 会使机械臂在重力作用下坠落，务必确认安全。
-- `request_stop()` 为高优先级急停，应绑定到独立物理急停通道。
-- 遥操态下不会执行手动控制指令。
-- `recover_joint_limits` 仅在 server 以 `allow_limit_recovery=True` 启动时可用。
-
-## 8. 与 litearm-python 对比
-
-| 方面 | litearm-python | litearm-cpp |
-|---|---|---|
-| 值类型 | 原生 `dict`/`list` | `LiteArmValue`（tagged union） |
-| 依赖 | 自动安装 | protobuf（gtest 仅测试） |
-| 适用 | 快速原型 / 脚本 | 低延迟嵌入式 / 实时系统 |
-
-三个版本接口方法一一对应，代码可跨语言迁移。
-
-## License
-
-Proprietary
+| 位姿入参 | 运行期判形态 | `rot::PoseInput` (三种写法各有具名工厂; 6 向量隐式转换) |
+| 取值 | `None` | `std::nullopt` |
+| 属性 | `arm.n` | `arm.n()` (只读) / 公开成员 (可调旋钮) |
+| 上下文管理器 | `with arm.zero_g():` | RAII `ZeroGSession`, 析构不抛 |
+| 重载 | 同名多态 | `Arm::write_frame(cmd, {payload})` 之类便捷重载 |
+| 弱引用 | `weakref` (读线程不钉住 Arm) | 不适用: 读线程在 `close()` 里被 join, 生命周期由 join 顺序保证 |
+| `__del__` | GC 兜底收尾 | 析构兜底收尾 (同样只委托给 `close()`) |
+
+⚠ **两处已知的继承差异** (原版就有, 移植时刻意保留):
+
+1. `license()` 不传 `echo_cmd`, 于是在**低于 1.8.0** 的固件上报"无应答超时"而不是
+   "固件没有这条命令" (证据见 `tests/test_license.cpp`)。
+2. `linux` 之外不做 CDC 自动发现 (macOS 无 sysfs; Windows 需要 SetupAPI 才能可靠读到
+   VID:PID, 猜一个会给出假阳性)。

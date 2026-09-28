@@ -1,0 +1,25 @@
+@PACKAGE_INIT@
+
+# litearm 的 CMake 包配置 —— 让客户能写:
+#
+#     find_package(litearm CONFIG REQUIRED)
+#     target_link_libraries(my_app PRIVATE litearm::litearm)
+#
+# ⚠ 导入的 target 由 `litearmTargets.cmake` 提供 (它由顶层 CMakeLists 的
+#   `install(EXPORT ...)` 生成)。这里只负责把它拉进来 + 做常规检查。
+#
+# ⚠⚠ **不要在这里手写 `add_library(litearm::litearm ALIAS ...)`** —— 那会和导出文件里
+#   的同名 target 撞车。客户拿到的 `litearm::litearm` 来自导出文件, 不是这里的别名。
+include("${CMAKE_CURRENT_LIST_DIR}/litearmTargets.cmake")
+
+# 传递依赖 (Threads) 由导出文件里的 INTERFACE_LINK_LIBRARIES 带上, 但 CMake 需要
+# 那个 find_package 在本配置文件的作用域里**被发现过**才能解析它。
+# ⚠ 少了这一句, 客户在 Linux 上 `find_package(litearm)` 会报
+#   "The link interface of target litearm::litearm contains: Threads::Threads but the
+#    target was not found" —— 而库本身编得好好的, 报错指向的地方极易误导。
+include(CMakeFindDependencyMacro)
+if(NOT WIN32)
+    find_dependency(Threads)
+endif()
+
+check_required_components(litearm)

@@ -1,0 +1,16 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: litearm
+Description: LiteArm STM32 直连后端 (薄协议 SDK, C++17, 零外部依赖)
+URL: https://github.com/nexform-tech/litearm-python
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -llitearm
+# ⚠ `Libs.private` 只在**静态链接**时被 `pkg-config --static` 带出来。
+#   本库的公开头里有 std::thread / std::mutex ⇒ 静态链接的客户需要 pthread。
+#   (glibc 2.34 起 pthread 已并入 libc, 故在很新的系统上它是冗余的 —— 但带上无害,
+#    而在老系统上缺了它客户会看到一堆 undefined reference to `pthread_*`。)
+Libs.private: -lpthread
+Cflags: -I${includedir}
