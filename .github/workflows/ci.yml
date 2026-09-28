@@ -1,0 +1,40 @@
+name: CI
+
+# Test gate for this repository. It runs on pull requests and on pushes to the
+# default branch; releases live in their own workflow (see .github/workflows/release.yml).
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true # a superseded pull request run is pointless
+
+jobs:
+  # The job must be named `test`: that is the required status check.
+  test:
+    # CMakeLists.txt requires protobuf >= 3.19; 22.04 ships 3.12.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libprotobuf-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
