@@ -1,6 +1,14 @@
 # Build artifacts
 build/
+build-*/
 generated/
+*.o
+*.a
+*.csv
+*.bin
+compile_commands.json
+.cache/
+Testing/
 
 # IDE
 .vscode/
