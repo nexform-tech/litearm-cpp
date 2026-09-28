@@ -6,18 +6,18 @@ LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中�
 本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.1.0 的 C++ 移植:
 同一套线协议、同一套语义、同一套安全判据, 逐条对照移植; 测试同样全离线可跑。
 
-> 📖 接口全景见 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
+> 接口全景见 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
 > 现场排查 (现象 → 原因 → 怎么办) 见 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)。
 
 ## 特点
 
-- 🔧 **零外部依赖**: 只用 C++17 标准库 + 平台自带串口 API (POSIX termios / Win32)。
+- **零外部依赖**: 只用 C++17 标准库 + 平台自带串口 API (POSIX termios / Win32)。
   不引 libserialport, 不引 numpy —— 重型计算本来就在固件里。
-- 📦 **单一定位**: 头文件 `include/litearm/`, 一个静态库 `liblitearm.a`。
-- 🔌 **直连 USB**: 一根线到固件; VID:PID `1d50:606f` 自动发现。
-- ⚙️ **固件干重活**: 规划/运动学/动力学都在固件; PC 侧只发点、判到位。
-- 🦾 **完整运动 API**: 关节运动、笛卡尔直线/圆弧/多路点、拖动示教。
-- 🛡️ **安全内建**: 子进程 fail-closed、独立急停通道、每条不可逆命令都标出来。
+- **单一定位**: 头文件 `include/litearm/`, 一个静态库 `liblitearm.a`。
+- **直连 USB**: 一根线到固件; VID:PID `1d50:606f` 自动发现。
+- **固件干重活**: 规划/运动学/动力学都在固件; PC 侧只发点、判到位。
+- **完整运动 API**: 关节运动、笛卡尔直线/圆弧/多路点、拖动示教。
+- **安全内建**: 子进程 fail-closed、独立急停通道、每条不可逆命令都标出来。
 
 ## 构建
 
@@ -696,10 +696,10 @@ A 侧的结论一致（它的注释也写"凡'超时真的发生'的判据要用
 
 | 平台 | 串口后端 | 状态 |
 | --- | --- | --- |
-| Linux | POSIX termios + `flock` + `poll` | ✅ 已实测 (含真 pty 测试) |
-| macOS | POSIX termios + `flock` + `poll` | ✅ 同一份代码路径; 但**端口自动发现不可用** (无 sysfs), 请显式传端口 |
-| Windows | Win32 `CreateFile`/`SetCommState`/`ReadFile`/`WriteFile` | ⚠ 已实现但**未在 Windows 上实机验证**; 端口自动发现同样不可用 |
-| Linux / aarch64 | 同 Linux (交叉编译) | ⚠ **只写了工具链文件, 一次都没编过** —— 本机没装 aarch64 工具链。见「安装与打包 / aarch64 交叉编译」 |
+| Linux | POSIX termios + `flock` + `poll` | 已实测 (含真 pty 测试) |
+| macOS | POSIX termios + `flock` + `poll` | 同一份代码路径; 但**端口自动发现不可用** (无 sysfs), 请显式传端口 |
+| Windows | Win32 `CreateFile`/`SetCommState`/`ReadFile`/`WriteFile` | 已实现但**未在 Windows 上实机验证**; 端口自动发现同样不可用 |
+| Linux / aarch64 | 同 Linux (交叉编译) | **只写了工具链文件, 一次都没编过** —— 本机没装 aarch64 工具链。见「安装与打包 / aarch64 交叉编译」 |
 
 ⚠ **真机验收的范围**（2026-09-28）：**全部可逆功能已跑通** —— 14 组 / 68 项断言 / 218 帧，
 **每组前后都回零**，含只读访问器全家、关节与笛卡尔运动、连续伺服、零重力、前馈与关节参数

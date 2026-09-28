@@ -1,86 +1,117 @@
 # AGENTS.md
 
-在本仓工作的操作规则。它们是**强制**的, 不是建议。
+Operating rules for agents working in this repository. They are mandatory, not advisory.
 
-> 本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 的 C++ 移植。
-> 上游的 `AGENTS.md` (Git 流程 / Conventional Commits / semantic-release) **同样适用于本仓**
-> —— 下面只写 C++ 侧特有的那部分, 外加几条移植时定下的纪律。
+Everything you write — commit messages, PRs, issues, documentation — is in English, following industry conventions, unless told otherwise.
 
-## 1. 移植纪律 (最重要的一条)
+## 1. Git Workflow
 
-**与上游逐条对照是硬约束。** 线协议、常量值、判据顺序、错误码语义、甚至用户可见的错误文案,
-都以 `litearm-python` 为准。改任何一条之前先问: 上游也是这么写的吗?
+These rules assume the repository is hosted on GitHub. Where it has no GitHub remote, the GitHub-specific steps (PRs, issues, releases) do not apply; branching, commit, and testing rules apply to every Git repository.
 
-- 如果**是**, 保留。
-- 如果上游有缺陷而你想顺手改对 —— **可以, 但必须**:
-  ① 在代码注释里写明"这是与原版的差异 + 为什么不一致";
-  ② 在 `README.md` 的"与原版的已知差异"一节登记;
-  ③ 加一条测试钉住**新**行为。
-  **不许静默改语义** —— 那会让两边在同一个现象上给出不同的结论。
-- 已知的两处继承差异见 `README.md` / `docs/DEVELOPER_GUIDE.md` 末节; 它们**是刻意的**,
-  不要"顺手修好"。
+**Never modify code directly on the default branch.** Always create a new branch first.
 
-## 2. 注释
+- The default branch may be `main` or `master`; `<default-branch>` below means whichever it is.
+- Sync before branching: `git switch <default-branch> && git pull --ff-only`.
+- Create a branch: `git switch -c <type>/<short-description>`.
+  - Examples: `feat/oauth-login`, `fix/null-pointer-on-logout`, `chore/bump-deps`.
+  - `<type>` is one of the commit types listed below.
+- Keep branches small and single-purpose. One branch solves one problem.
+- Keep the branch current by rebasing on `<default-branch>`; do not merge `<default-branch>` into it.
+- Never rewrite history that has already been pushed to a shared branch.
 
-本仓的注释密度**刻意很高**, 且是**中文**的 —— 因为上游也是 (它每一段注释都在写
-"为什么是这样、写错会怎么错")。搬代码时**别把那些注释丢掉**:
+### Commits
 
-- 那些"为什么"不是装饰: 判据的顺序、某个常量的取值依据、某条守卫防的是哪一侧的风险,
-  全在注释里。丢掉注释 = 丢掉可以推理的依据, 下一个改的人只能靠猜。
-- 允许**压缩** (把 20 行历史叙述压成 2 行结论), 但不允许**删除结论**。
-- 新增判据时按同样口径写清楚**两个方向**的代价 —— 本仓的判据几乎都是"两害相权",
-  只记一侧的注释会让人往错的方向改。
+Every commit message follows Conventional Commits:
 
-## 3. 构建与测试
+```
+<type>: <subject>
 
-- **每次提交、每次推送之前都要跑全套测试**: `./build.sh`。
-- 编译**零警告**是基线 (`-Wall -Wextra`)。提交前至少跑一次 `./build.sh --werror`。
-- 涉及内存/并发的改动跑一次 `./build.sh --asan`。
-- **不许为了让测试变绿而删测试、跳过测试、放宽断言**。修因, 不修表。
-- 新增行为、修复缺陷都要**带测试**。
-- 测试**全离线**: 不许依赖真机。假传输是 `litearm::testing::FakeTransport`;
-  要测真串口路径就用 **pty** (见 `tests/test_transport.cpp`), 不要用桩去模拟串口语义
-  —— 桩会把 `timeout` 整个忽略掉。
+<body>
 
-## 4. 并发的硬规矩
+<footer>
+```
 
-本仓的核心难点是"一条链路 + 多条线程"。改任何并发代码之前先读
-`docs/DEVELOPER_GUIDE.md` 的 §3/§4/§6:
+- `<type>` is required and must be one of: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+- `<subject>`: imperative mood, lowercase, no trailing period, 72 characters or fewer. Example: `feat: add OAuth login`.
+- `<body>`: optional. Explain what changed and why, not how. Wrap at 72 characters.
+- `<footer>`: optional. Link issues (`Closes #123`) and mark breaking changes with `BREAKING CHANGE: <description>`.
+- One logical change per commit. Do not mix refactoring with behavior changes.
+- Never commit generated artifacts, secrets, credentials, or local config.
+- **Never sign your work.** No `Co-Authored-By:` trailers, no "Generated with <tool>", no badges or emoji in commits or PR bodies. A commit or PR records who is accountable, and that is the human or the repository owner, never the agent or the tool it ran on. `Signed-off-by:` is a separate legal certification and only the human may add it.
 
-- **`Ack::reader_loop` 是唯一读者。** 别在别处再开一条读线程或直接调
-  `transport->read_frame` —— 那会抢走别人的应答, 症状是"受害者报无应答而命令其实已生效"。
-- **`Arm::raw_write` 是唯一写口。** 钩子顺序 (守卫 -> 清队 -> drain) 是承重的, 见 §4。
-  ⚠ **同帧节流已整套删除** (2026-09-28, 见 README「与原版的差异」①) —— 唯一写口现在的不变式
-  是「**进了这个函数就一定会写出去**」, 别再加回任何"静默丢弃某一帧"的路径。
-- **锁序**: `cart_serial_` / `zg_lock_` -> `CartPending::lock_` -> `transport::wlock_`。
-  反向无环。新增锁之前先在这张表里放好位置。
-- **降能量方向的动作 (急停/失能/退出零重力) 与只读查询永远不许被串行锁挡住** ——
-  持锁者可能阻塞到 `move_timeout`。
-- 加锁之后**不要在持锁期间调用其它子系统** (`Ack::deliver` 把 `on_reply` 留在锁外
-  就是为这个)。
-- **锁纪律有运行时断言**: `Ack::MuLock` 在 Debug 构建下登记 `mu` 的持有者, 碰受保护状态
-  的地方都用 `dbg_check` 断言自己在锁内。新增访问点**顺手加一句 `dbg_check`** ——
-  它比"读代码确认"可靠, 也是 TSan 报了什么而人眼看不出问题时的一锤定音 (见 README)。
-- **fork 之后, 子进程里绝不析构继承来的对象。** 不只是"不能 join": 析构一个**有人停在
-  上面的 `std::condition_variable`** 会**永久阻塞** (glibc 的组切换要取 condvar 的内部锁,
-  而那把锁与已经不在的等待者绑在一起) —— 实测定位, 最小复现见 `Ack::~Ack` 的注释。
-  这条在**成员析构**里, 躲不掉, 所以唯一的办法是**根本别析构那个对象**。
-  新增"可能被析构、且持有 condvar"的成员时, 先想清楚它在 fork 之后会不会被谁析构。
+### Issues
 
-## 5. 安全相关的改动
+- Search before creating: `gh issue list --search "<keywords>"`. Never open a duplicate.
+- Read the full issue and all its comments before starting; check for a linked PR to avoid repeating work.
+- Create issues with `gh issue create`. Title: short, imperative, no trailing period.
+  - Bug body: **Context**, **Expected**, **Actual**, **Reproduce**.
+  - Feature body: **Problem**, **Proposal**, **Alternatives**.
+- Use only labels that already exist in the repository. Never invent or create labels.
+- One issue per problem. Do not bundle unrelated work; link related issues instead.
+- Reference the issue in commits and in the PR body. Use a closing keyword (`Closes #123`, `Fixes #123`, `Resolves #123`) only when the PR fully resolves it; otherwise use `Refs #123`.
+- Let the merge close the issue. Do not close it by hand first; verify it is closed after merge.
+- A PR links to an issue and closes it automatically only when the PR targets `<default-branch>`; a PR targeting any other branch links nothing and closes nothing.
+- Never edit, close, reopen, reassign, or label an issue without explicit user approval. Never rewrite someone else's issue text; comment instead.
 
-下面这些是安全底线, 改动前必须有明确的理由与测试:
+### Pull Requests
 
-- 子进程 fail-closed (`ForkedSessionError`);
-- 终态 (DFU) 零下发 (`ArmIsInDfuError`);
-- 写失败 ⟹ 整帧未送达 (`write_frame` 把 `write()` 与 `flush()` 的失败**分开报**);
-- "宁可报结局未知, 绝不报成功" (笛卡尔配对);
-- "到位 ≠ 停止" (`CartPlan::settled` 的双判据);
-- 不可逆命令要求调用方自己 `disable()` (库不代劳)。
+- Push the branch and open a PR with `gh pr create`.
+- **The commit message is what lands, and therefore what the release reads.** Under GitHub's default squash settings a single-commit PR puts the *commit message* on `<default-branch>` and ignores the PR title, while a multi-commit PR puts the *PR title*. Make the PR title identical to the commit subject so neither case can be wrong.
+- Put `BREAKING CHANGE:` in the commit footer, never only in the PR description. A squash merge carries the PR's commit messages into the result but not its description, so an approved major recorded only in the description still ships as a minor bump.
+- PR body must contain:
+  - **Summary** — what this changes and why.
+  - **Changes** — bullet list of the concrete edits.
+  - **Testing** — the exact commands run and their result.
+  - **Issues** — `Closes #123` when applicable.
+- Do not open a draft PR unless asked. Do not open a PR before the test suite passes.
+- Address review feedback with new commits; do not force-push a PR under review unless asked.
 
-## 6. 报告
+### Merging
 
-- 报告测试命令与结果时**逐字照抄**, 不许概括成"测试通过"。
-- 测试有失败、或有步骤被跳过时, **不许**说任务完成。
-- 说清平台: Windows 后端 (Win32 串口) **未在 Windows 上实机验证**, 改动它时不要声称
-  已验证。
+- Repository owners merge with **squash and merge** only (`gh pr merge --squash`), producing exactly one commit on `<default-branch>`.
+- Never use a merge commit or rebase merge. Never push directly to `<default-branch>`.
+- Before merging, the commit messages and the PR title must both be valid Conventional Commit messages, and the CI must be green.
+- Delete the source branch after merging.
+
+## 2. Testing
+
+- The repository has a test suite. Run it before **every** commit and **every** push.
+- All tests must pass. A failing suite blocks the commit, the push, and the PR.
+- Never delete, skip, weaken, or comment out tests to make a suite pass. Fix the cause.
+- Add tests for every new behavior and every bug fix.
+- If a test failure is pre-existing and unrelated, report it explicitly instead of ignoring it.
+- Do not commit code you know to be broken.
+
+## 3. Versioning and Releases
+
+- Releases are fully automated: `semantic-release` in the `Release` workflow runs on every push to `<default-branch>` and owns the tag, the GitHub release, and the version. Agents never take part in it.
+- The merged commit prefix decides the version: `feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE:` → major; every other type (`docs`, `style`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`) releases nothing. An incorrect prefix ships an incorrect version.
+- **A major release happens only when the user explicitly asks for one.** `BREAKING CHANGE:` in a commit footer and the `!` shorthand (`feat!:`, `fix!:`) are the only things that can reach a major version, so writing one is a decision, not a description. Never write either marker on your own initiative, and never write it merely to be accurate. When you believe a major is warranted, tell the user the exact transition first — read the current version from the newest `vX.Y.Z` tag (the bootstrapped `v0.0.0` counts when it is the only one) and state it as `v1.2.3 -> v2.0.0` — then wait for the answer. Without that explicit approval, the same change ships as an ordinary `feat:` (minor) or `fix:` (patch).
+- **Say it out loud when a change still breaks consumers.** The version policy does not remove the obligation to inform: when a change breaks an existing consumer and no major was approved, the PR **Summary** must state it plainly — "breaks X for consumers; publishes as a minor under this policy" — so the user can still upgrade it to a major before merging. Never let a break ship as a silent minor.
+- **Never tag, publish, or edit releases by hand** — no `git tag`, `npm publish`, `twine upload`, `cargo publish`, `docker push`, or `gh release create`, no edits to version numbers or `CHANGELOG.md`, and no `@semantic-release/git` in `.releaserc.json` (the release job never commits to `<default-branch>`). The manifest version field (`package.json`, `pyproject.toml`, `Cargo.toml`) stays at its placeholder `0.0.0-semantic-release`: never edit it and never treat it as the current version — the git tag is the only source of truth.
+
+## 4. Documentation
+
+- **Every document opens with what it is and who it is for.** One sentence, at the top, before the first heading: what problem it solves and who should read it. No "Introduction" section that says nothing, no restating the title.
+- **Structure is scannable.** Sentence-case headings, no deeper than three levels. Sequential headings for step-by-step guides (`## 1. …`, `## 2. …`). Order follows the reader's task, not your discovery order.
+- **Write plainly and directly.** One idea per sentence; "you", active voice, imperative for instructions. Keep sentences short enough to read in one pass, wrap paragraphs around 80 columns, and leave each list item on a single line — soft line breaks in Markdown are rendering noise, so do not hard-wrap a bullet to look tidy. No marketing adjectives ("powerful", "seamless"), no "simply", no filler ("it should be noted that"). If a fact changes what the reader does, state it outright instead of implying it.
+- **Examples are concrete and copy-pasteable.** Code blocks carry a language tag. Commands run as written, with the working directory stated. Use real names in examples, not `foo`/`<something>`. Prefer one number over an adjective: "returns in under 50 ms on the reference machine", not "fast".
+- **Avoid emoji.** The default is none: do not decorate headings, bullets, or status, and do not use one where a word or a table column is clearer. Use one only when it carries meaning that a word cannot state more clearly. Emoji do not survive a terminal, a diff, or a text-only reader, and they age badly.
+- **Warn against the mistakes the reader will make.** Where a tempting approach breaks, say so in a **do not** line and give the reason. This is what stops the next reader — or agent — from repeating it.
+- **Verify what you write.** A claim that was not tested is either reproduced with the exact command that produced it, or marked as unverified. Never present a belief as a fact.
+- **Documentation tracks the code.** A change that alters behavior updates the documentation in the same pull request. A rule that nobody can check — by test, linter, review or PR checklist — is noise; either make it checkable or drop it.
+- **Keep repository-specific facts out.** Test commands, tokens, version lines and local paths belong to the repository that has them, not to a synced standard.
+
+## 5. Required Tooling
+
+- **`git` is always required.** Use it for all version control operations. If it is missing, stop and tell the user to install it, including the command for their platform. Do not install tooling unless the user approves.
+- **`gh` is required whenever the repository has a GitHub remote** (detect with `git remote -v`). If it is missing, stop and tell the user to install it; the PR, issue, and release steps cannot be completed without it.
+- Use `gh` for all GitHub operations: repositories, issues, PRs, reviews, releases, CI status.
+- Do not call the GitHub API with `curl` or `wget` when `gh` can do the job.
+- Confirm authentication with `gh auth status` before GitHub operations; if unauthenticated, tell the user to run `gh auth login`.
+
+## 6. Reporting
+
+- State the branch, the commit hashes, and the PR URL when reporting completed work.
+- Report test commands and their results verbatim.
+- Never claim a task is complete when tests fail, CI is red, or a step was skipped.

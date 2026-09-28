@@ -1,70 +1,74 @@
-# 未验证登记册
+# The unverified register
 
-> **交付纪律**: 「**未实测 ≠ 已验证**」。凡是「没验证的 / 已知不完美的 / 有意与参照实现分叉的」，
-> 都**如实登记在这里** —— 报告里必须能分清「实测 / 只编译未运行 / 未做」。
+> **Delivery discipline**: "**not measured does not equal verified**". Anything that is
+> "unverified / known to be imperfect / deliberately diverging from the reference
+> implementation" is **registered here, truthfully** — a report has to let the reader tell
+> "measured / compiled but never run / not done" apart.
 >
-> ⚠ 本册的**核心纪律只有一条，而且它本身有判据**：**每条必须带出处**。
->    「存在差异」这种没有出处的条目**等于没登记** —— 现场复核不了，就得从头再查一遍。
->    判据见 `tests/test_register.cpp`（五列、出处形状、id 恰好 1..N，三条都钉住）。
+> ⚠ This register has **one core rule, and that rule has a check of its own**: **every entry
+> must carry a reference**. An entry like "there is a difference" with no reference **counts as
+> not registered at all** — nobody can re-check it in the field, so the whole investigation has
+> to be repeated from scratch. The check lives in `tests/test_register.cpp` (five columns,
+> reference shape, ids exactly 1..N — all three are pinned).
 
-## 格式约定
+## Format conventions
 
-表头固定五列：`| # | 项 | 性质 | 状态 | 出处 |`
+The header is a fixed five columns: `| # | Item | Nature | Status | Reference |`
 
-- **出处**必须能命中 `文件.扩展名:数字` 或 7~40 位十六进制提交哈希。
-  ⚠ **本仓当前不是 git 仓库**（`git rev-parse` 报「不是 git 仓库」）⇒ 今天只能用
-  `文件:行号` 这一种。哈希那一支留着，等它进版本管理后即可用。
-- ⚠ **行号会腐** ⇒ 能写**符号名**就写符号名（如 `Arm::refresh_limits`），行号只是"当时"的锚。
-  看到行号对不上时**先按符号名找**，再回来把行号改对。
-- ⚠ **id 恰好是 1..N，不留空号**（判据会逐个数）。删条目要重编号 —— 那是**响的**改动，
-  不像悬空那样容易被忽略。
+- A **reference** must match `file.extension:number` or a 7-40 digit hexadecimal commit hash.
+  ⚠ This repository **is now under Git**, so both forms are available; `file:line` remains the
+  primary one and the hash branch is the fallback for things that no single line anchors.
+- ⚠ **Line numbers rot.** Where a **symbol name** can be written instead, write it (for example
+  `Arm::refresh_limits`); the line number is only the anchor "as of then". When a line number
+  does not match, **search by symbol name first**, then come back and correct the line number.
+- ⚠ **Ids are exactly 1..N, with no gaps** (the check counts them one by one). Deleting an entry
+  means renumbering — that is a **loud** change, unlike a dangling reference, which is easy to
+  overlook.
 
-## 图例（性质）
+## Legend (nature)
 
-| 性质 | 含义 |
+| Nature | Meaning |
 |---|---|
-| 与 Python 分叉 | 本仓**有意**与参照实现 `litearm-python` 行为不同 ⇒ 相关场景**不进**跨语言对拍 |
-| 已知继承缺陷 | 参照实现**就有**，本仓**保留原语义**（移植纪律：不静默改语义） |
-| 未验证项 | 离线**没有判据**能分辨 / 真机没跑 ⇒ **不许**为它编一条恒真判据充数 |
-| 结构事实 | 不是缺陷也不是取舍，是"这个形状在运行期观测不到"这类机制性说明 |
-| 有意取舍 | 有意识地选了某一侧，代价写清 |
+| Diverges from Python | This repository **deliberately** behaves differently from the reference implementation `litearm-python`, so the affected scenarios **do not enter** the cross-language comparison |
+| Inherited defect | The reference implementation **has it too**; this repository **preserves the original semantics** (porting discipline: never change semantics silently) |
+| Unverified item | No offline **criterion** can tell the difference, or it was never run on hardware, so it is **forbidden** to invent a vacuous, always-true criterion just to fill the slot |
+| Structural fact | Neither a defect nor a trade-off but a mechanistic statement, such as "this shape is unobservable at runtime" |
+| Deliberate trade-off | One side was chosen knowingly; the cost is written down |
 
-## 登记册
+## The register
 
-| # | 项 | 性质 | 状态 | 出处 |
+| # | Item | Nature | Status | Reference |
 |---|---|---|---|---|
-| 1 | **同帧节流整套删除**（原版有 `_tx_allowed` / `set_tx_repeat_min_interval`）。原版允许节流**任何**帧 ⇒ 一条等 ACK 的命令被丢掉后帧没上 USB、固件永不应答、调用方只能等满窗口后报"无应答"（归因反了）。本仓**不做这套机制** | 与 Python 分叉 | 有意 | `src/arm.cpp:480`（`Arm::raw_write` 的说明）+ README「与原版的差异」① |
-| 2 | **客户端预检四条**：非有限目标 / 软限越限 / 速度 / `move_p` 的容差。全部在**发帧之前**本地拒发；原版直接把参数发走、由固件 `clampf` 静默钳 | 与 Python 分叉 | 有意 | `include/litearm/arm.hpp:311`（`precheck_q_`）+ `tests/test_precheck.cpp` |
-| 3 | **`connect()` 期读 n 条 `0x24` 建软限缓存** —— 原版的 `connect()` **不读软限**。⇒ 连接期的下行两侧本来就不同名，跨语言对拍一律**从 `connect` 之后开始录** | 与 Python 分叉 | 有意 | `src/arm.cpp:1012`（`Arm::refresh_limits`）|
-| 4 | **`move_p` 的 speed 预检** —— 六个运动入口里**唯一**原版没有的那只 | 与 Python 分叉 | 有意 | `src/arm.cpp:1121`（`Arm::move_p` 的 `precheck_speed_` 调用点）|
-| 5 | **七个只读诊断访问器**（`is_connected` / `is_in_dfu` / `status_seq` / `msg_hz` / `banner_version` / `host_stats` / `options`）—— 参照侧**一个都没有** | 与 Python 分叉 | 有意 | `include/litearm/arm.hpp:537` + `tests/test_accessors.cpp` |
-| 6 | **可注入时间源**（`ArmOptions::clock`）—— 参照侧没有时间抽象。⚠ 本仓的 `Clock` **刻意不提供 `sleep_until`**（另一套实现有）：本仓的等待清一色是 `cv.wait_for`，靠 notify 唤醒；把睡眠搬进时钟会丢掉这条。代价：假钟只给**纯比较**类判据用，用在等待路径上会**挂死** | 与 Python 分叉 | 有意 | `include/litearm/clock.hpp:21` + README「与原版的差异」④ |
-| 7 | **`port_string()` 报实际链路端口**（原版无此公开入口；原版私有的 `_port` 只是构造入参）。本仓先前也返回构造入参 ⇒ 自动发现时恒为空串，而**头文件注释承诺的是"或自动发现到的"**（注释与实现脱节，真机复现过） | 与 Python 分叉 | 已修 2026-09-28 | `include/litearm/arm.hpp:584` |
-| 8 | **`get_status_now()` 在固件拒绝 `0x40` 时可能报成功**。结论判据后半条是"有任何新状态帧到"，而被动流与我们的 `0x40` 是两条独立的线 ⇒ 帧先落进窗口时，那条 `ERR` 还没投递，函数查一眼队列（空）便落到"返回成功"。**量化**：调用期间零帧交付 ⇒ 150/150 正确抛出；交付恰好 1 帧 ⇒ 150 次里 26~35 次报成功 | 已知继承缺陷 | 保留原语义 | `src/arm.cpp:586`（`Arm::get_status_now` 的 `done` 谓词）+ README「已知继承的差异/缺口」 |
-| 9 | **同一根因让安全守卫 fail-open**：`Arm::reject_if_cart_in_flight()` 靠 `get_status_now()` 现取一帧判 `cart_busy`，取不到时本该**保守拒绝**；而上面那个窗口让它"误以为取到了" ⇒ 拿到陈旧状态 ⇒ `cart_busy=0` ⇒ **放行**。正是"轨迹中途进场靠摩擦滑停"那一侧 | 已知继承缺陷 | 保留原语义 | `src/arm.cpp:404`（`Arm::reject_if_cart_in_flight`）+ `tests/test_zero_g.cpp` 的 `zero_g_is_refused_conservatively_when_the_status_is_unavailable` |
-| 10 | **`license()` 在低于 1.8.0 的固件上报"无应答超时"**而非"固件没有这条命令"：它调 `expect` 时没传 `echo_cmd` ⇒ `ERR{0x2F,0x00}` 落到别的队列，本入口看不到 | 已知继承缺陷 | 保留原语义 | `src/arm.cpp:1376`（`Arm::license`）+ README「已知继承的差异/缺口」 |
-| 11 | **Windows 后端从未在 Windows 上跑过**（也没编译过）。改动它时**不许**声称已验证 | 未验证项 | 未做 | `src/transport.cpp:395`（`#else  // _WIN32` 起的整段）+ README:678（「平台」表） |
-| 12 | **macOS 只共享代码路径，未实测**；且**端口自动发现不可用**（无 sysfs）| 未验证项 | 未做 | README.md:678（「平台」表）|
-| 13 | **aarch64 只写了工具链文件，一次都没编过** —— 本机没装 `aarch64-linux-gnu-g++`。已实测的只有"工具链文件被正确解析、干净地失败在找不到编译器" | 未验证项 | 未做 | `cmake/toolchain-aarch64-linux-gnu.cmake:16`（`CMAKE_SYSTEM_NAME` 起）|
-| 14 | **真机全功能验证已跑通**（2026-09-28，14 组 / 68 项断言 / 218 帧，**每个测试前后都回零**）。覆盖：只读访问器全家（含 `get_tcp`/`ik`/`host_stats`/`options`/`msg_hz`）、`params` 读回、`model` 读（probe/get_body/get_jm/status/get_gravity/**revert**）、`set_speed`/`set_motion_mode`/`park`/`clear_faults`/`reset`、`movej`/`movej_sync`、`move_p`、`move_js`/`send_mit`/`send_mit_all`、`move_l`/`move_c`/`move_path`、`zero_g` 启停、FF 全套（读原值写回）、`set_joint_param`/`set_joint_limits`（读原值写回）、`log().start/capture/stop`、`kin_bench`、`disable`/`enable` 往返、`emergency_stop` + 恢复。**逐帧审计：无任何不可逆命令**。⚠ **仍未在真机上跑**：四项不可逆（用户裁决排除）＋ `activate()`（本板已激活，调它只会回聚合档 0x02）＋ 真机上的**负路径**（不可达目标 / 拒发 / 超时只验到过一次 `move_p`，见下）| 未验证项 → **大部分已验** | 已实测 | `README.md:704`（真机验收范围）+ `/tmp/live_full.cpp`、`/tmp/live_recover.cpp`（**未收编进仓**）|
-| 15 | **`test_protocol_sync` 从未对过真实固件源码** —— 固件仓挂在 Gitee 企业权限后，匿名取不到。它的正则与上游对齐过，但**只在构造出来的仿固件树上验过漂移检测** | 未验证项 | 未做 | `tests/test_protocol_sync.cpp:39`（`fw_dir()` 读 `LITEARM_FW_DIR`）|
-| 16 | **真机只读复验的范围**（2026-09-28）：用 `/tmp/live_queries.cpp` 在 `Litearm1.8.0-7J` 上跑通 **38 帧**、全部查询类（白名单硬判据）；验到 0x43/0x42/0x34/0x35/0x38/0x39/0x2B/0x2C/0x2F/0x24/0x40 与四条预检。⚠ 机械臂**未接**时 `joint_fault=0x007F`（7 轴全锁存）、`mode=EMERGENCY`，接上后转 `0x0000`/`MOVE_J` —— 即该故障位就是"CAN 上收不到电机反馈" | 结构事实 | 已记录 | README.md:687 + `/tmp/live_queries.cpp:26`（白名单）|
-| 17 | **真机探针不在仓里**（`/tmp/live_queries.cpp` 等）⇒ "下行帧白名单审计"这条保护**在仓内不可复现**。它验过的那几件事在仓内另有离线判据，但"真的只发了查询"这句话目前只有那一份输出为证 | 结构事实 | 未收编 | `/tmp/live_queries.cpp:26`（`kQueryOnly` 白名单；不在版本管理内）|
-| 18 | **本仓不是 git 仓库** ⇒ 本册出处只能用 `文件:行号`，而**行号会腐**。这是当前状态下最弱的一环：判据只查**形状**，查不了"这个行号还指不指得到那句话" | 结构事实 | 已知局限 | `git rev-parse` 在本仓报「不是 git 仓库」；`tests/test_register.cpp:85`（`has_reference` 只验形状）|
-| 19 | **`framing.hpp` 抽出来是为了消灭重复**（POSIX 与 Win32 从前各写一份分帧状态机）。**新增部分被编译被单测**，但 Win32 那两个**调用点**仍是 `#ifdef _WIN32` 里的代码 —— 在 Linux 上编不到 | 有意取舍 | 有意 | `include/litearm/framing.hpp:23` + `tests/test_framing.cpp` |
-| 20 | **打包只对静态库实机验过**。`BUILD_SHARED_LIBS=ON` 会走同一套 install/export 规则，但**没有实测过共享产物**，也没有做符号可见性控制（`-fvisibility=hidden` + 导出宏）⇒ 共享库会把全部符号导出 | 未验证项 | 未做 | `CMakeLists.txt:124`（install 段）|
-| 21 | **USB 重新枚举之后的第一次 `connect()` 会握手超时**（`get_firmware 无应答`），等几秒重试即好。真机实测（2026-09-28）：当天**4 次**重新插上/重新直通之后**每一次首次连接都失败**，重试全部成功；热链路下从未出现。**参照实现同样不重试**（`arm.py` 的 `connect()` 也是发一次 `0x41`、等 1.5s、失败就 `close()` 并抛）⇒ 属**继承行为**，不是移植引入的 | 已知继承缺陷 | 保留原语义（未修）| `src/arm.cpp:235`（`raw_write(proto::CMD_GET_FIRMWARE)`）+ README.md:620（「已知继承的差异/缺口」）|
-| 22 | **掉电重启后的锁存怎么清 —— 已实测（2026-09-28，真机两次）**。⚠⚠ **本条的早期版本把结论下宽了**（据"只有 J4 锁存"那一例写成"根因是电气、软件清不掉"）；后一次全轴锁存的实测**推翻了那个推广**。**两次实测**：<br>**(a) 全 7 轴锁存** `joint_fault=0x007F` + `enabled=0` + `err=0`（7/7）+ 最大力矩幅值≈0.2：`clear_faults()` 清掉 `joint_fault`（`0x007F→0x0000`，但 `faulted` 仍为 1 —— 因为 `mode=EMERGENCY` 也算 faulted）→ `reset()` 清掉其余（`flags` 归零、`mode=INIT`）→ **`enable()` 成功，且电机随即开始报数**（`err=0` 的轴数 `7/7 → 0/7`）。⇒ **这条序列是可用的恢复路径**。<br>**(b) 单轴锁存** `joint_fault=0x0008`（J4，固件称 `drop_hold` 掉线刚性持位）：`clear_faults()` **逐位无变化**；`reset()` 清得掉**但一个检查周期内就重新锁上**。⚠ 两例的差别**尚未查清**（疑似 `drop_hold` 与普通 `joint_fault` 不是同一个位，或与"那次 enable 始终没成功、电机没上线"有关）—— **不编一套统一理论**，如实记两例。<br>**顺带实测**：`reset()` **会掉使能**（`enabled: 1→0`）；`err` 字节像是"该轴电机在不在报数"（健康=1；总线/未使能=0），但 SDK 只原样透传、**不解释它** | 未验证项 → **部分定性** | 已实测 | `TROUBLESHOOTING.md:304`（§17）+ `/tmp/live_recover.cpp`、`/tmp/live_reset.cpp` 的实测输出（**未收编进仓**）|
+| 1 | **Same-frame throttling removed entirely** (the original has `_tx_allowed` / `set_tx_repeat_min_interval`). The original permits throttling of **any** frame, so a command awaiting an ACK can be dropped, its frame never reaches USB, the firmware never answers, and the caller can only wait out the full window and then report "no reply" — a misattributed cause. This repository **does not implement that mechanism** | Diverges from Python | Deliberate | `src/arm.cpp:480` (the note on `Arm::raw_write`) + README "Four deliberate divergences" (1) |
+| 2 | **Four client-side prechecks**: non-finite target / soft-limit violation / speed / the `move_p` tolerance. All four refuse **locally, before a frame is sent**; the original sends the arguments straight through and lets the firmware `clampf` clamp them silently | Diverges from Python | Deliberate | `include/litearm/arm.hpp:311` (`precheck_q_`) + `tests/test_precheck.cpp` |
+| 3 | **`connect()` reads n `0x24` frames to build the soft-limit cache** — the original's `connect()` **does not read soft limits**. So the downstream traffic during connection is not identically named on the two sides; cross-language comparison always **starts recording after `connect`** | Diverges from Python | Deliberate | `src/arm.cpp:1012` (`Arm::refresh_limits`) |
+| 4 | **The `move_p` speed precheck** — the **only** one of the six motion entry points that the original lacks | Diverges from Python | Deliberate | `src/arm.cpp:1121` (the `precheck_speed_` call site in `Arm::move_p`) |
+| 5 | **Seven read-only diagnostic accessors** (`is_connected` / `is_in_dfu` / `status_seq` / `msg_hz` / `banner_version` / `host_stats` / `options`) — the reference side has **none of them** | Diverges from Python | Deliberate | `include/litearm/arm.hpp:537` + `tests/test_accessors.cpp` |
+| 6 | **Injectable time source** (`ArmOptions::clock`) — the reference side has no time abstraction. ⚠ This repository's `Clock` **deliberately provides no `sleep_until`** (another implementation has it): every wait here is a `cv.wait_for` woken by a notification, and moving sleep into the clock would lose that property. Cost: the fake clock is usable only for **pure comparison** criteria; using it on a wait path **hangs** | Diverges from Python | Deliberate | `include/litearm/clock.hpp:21` + README "Four deliberate divergences" (4) |
+| 7 | **`port_string()` reports the port of the live link** (the original has no such public entry point; its private `_port` is only the constructor argument). This repository previously returned the constructor argument too, so it was always an empty string under auto-discovery, while **the header comment promised "or the one found by auto-discovery"** (comment and implementation were out of step; reproduced on hardware) | Diverges from Python | Fixed 2026-09-28 | `include/litearm/arm.hpp:584` |
+| 8 | **`get_status_now()` can report success when the firmware refuses `0x40`.** The second half of the completion criterion is "any new status frame arrived", and the passive stream and our `0x40` are two independent lines, so when a frame lands in the window first, that `ERR` has not been delivered yet; the function glances at the queue (empty) and falls through to "returned success". **Quantified**: with zero frames delivered during the call, 150/150 threw correctly; with exactly 1 frame delivered, 26-35 of 150 reported success | Inherited defect | Semantics preserved | `src/arm.cpp:586` (the `done` predicate of `Arm::get_status_now`) + README "Known inherited gaps" |
+| 9 | **The same root cause makes a safety guard fail open**: `Arm::reject_if_cart_in_flight()` calls `get_status_now()` to take a fresh frame and read `cart_busy`, and when it cannot get one it ought to **refuse conservatively**; the window above instead lets it "believe it got one", so it reads stale state, sees `cart_busy=0`, and **lets the command through**. That is exactly the "entering mid-trajectory and coasting to a stop on friction" side | Inherited defect | Semantics preserved | `src/arm.cpp:404` (`Arm::reject_if_cart_in_flight`) + `tests/test_zero_g.cpp` case `zero_g_is_refused_conservatively_when_the_status_is_unavailable` |
+| 10 | **On firmware below 1.8.0, `license()` reports "no reply, timed out"** rather than "the firmware has no such command": it calls `expect` without passing `echo_cmd`, so `ERR{0x2F,0x00}` lands in a different queue and this entry point never sees it | Inherited defect | Semantics preserved | `src/arm.cpp:1376` (`Arm::license`) + README "Known inherited gaps" |
+| 11 | **The Windows backend has never run on Windows** (it has never been compiled there either). Do **not** claim it is verified when changing it | Unverified item | Not done | `src/transport.cpp:395` (the whole block from `#else  // _WIN32`) + `README.md:789` (the "Platforms" table) |
+| 12 | **macOS shares the code path only and was never measured**; **port auto-discovery is unavailable there** (no sysfs) | Unverified item | Not done | `README.md:789` (the "Platforms" table) |
+| 13 | **aarch64 has only a toolchain file written; it has never been compiled once** — no `aarch64-linux-gnu-g++` on this machine. All that was measured is that "the toolchain file parses correctly and fails cleanly at not finding a compiler" | Unverified item | Not done | `cmake/toolchain-aarch64-linux-gnu.cmake:16` (from `CMAKE_SYSTEM_NAME`) |
+| 14 | **Full-feature hardware verification has passed** (2026-09-28, 14 groups / 68 assertions / 218 frames, **homing before and after every test**). Coverage: the full set of read-only accessors (including `get_tcp` / `ik` / `host_stats` / `options` / `msg_hz`), `params` read-back, `model` reads (probe / get_body / get_jm / status / get_gravity / **revert**), `set_speed` / `set_motion_mode` / `park` / `clear_faults` / `reset`, `movej` / `movej_sync`, `move_p`, `move_js` / `send_mit` / `send_mit_all`, `move_l` / `move_c` / `move_path`, `zero_g` start and stop, the full FF set (read the original value, write it back), `set_joint_param` / `set_joint_limits` (read the original value, write it back), `log().start/capture/stop`, `kin_bench`, a `disable` / `enable` round trip, and `emergency_stop` with recovery. A **frame-by-frame audit found no irreversible command**. ⚠ **Still not run on hardware**: the four irreversible ones (excluded by user decision), `activate()` (this board is already activated, so calling it only returns the aggregate tier `0x02`), and the **negative paths** on hardware (unreachable target / refusal / timeout were hit only once, on `move_p`, see below) | Unverified item, **mostly verified** | Measured | `README.md:798` (scope of hardware acceptance) + `/tmp/live_full.cpp`, `/tmp/live_recover.cpp` (**not brought into the repository**) |
+| 15 | **`test_protocol_sync` has never been checked against the real firmware sources** — the firmware repository sits behind Gitee enterprise permissions and cannot be fetched anonymously. Its regexes were aligned with the upstream, but the drift detection was **only validated against a constructed fake firmware tree** | Unverified item | Not done | `tests/test_protocol_sync.cpp:39` (`fw_dir()` reads `LITEARM_FW_DIR`) |
+| 16 | **Scope of the read-only hardware re-verification** (2026-09-28): `/tmp/live_queries.cpp` ran **38 frames** on `Litearm1.8.0-7J`, all of them queries (a hard-coded whitelist criterion); it exercised `0x43` / `0x42` / `0x34` / `0x35` / `0x38` / `0x39` / `0x2B` / `0x2C` / `0x2F` / `0x24` / `0x40` plus the four prechecks. ⚠ With the arm **disconnected**, `joint_fault=0x007F` (all seven axes latched) and `mode=EMERGENCY`; connected, they go to `0x0000` / `MOVE_J` — that is, those fault bits mean "no motor feedback on the CAN bus" | Structural fact | Recorded | `README.md:798` + `/tmp/live_queries.cpp:26` (the whitelist) |
+| 17 | **The hardware probes are not in the repository** (`/tmp/live_queries.cpp` and the rest), so the "downstream frame whitelist audit" safeguard **is not reproducible inside the repository**. The things it verified have separate offline criteria here, but the claim "it really only sent queries" currently rests on that one output | Structural fact | Not brought in | `/tmp/live_queries.cpp:26` (the `kQueryOnly` whitelist; not under version control) |
+| 18 | **Line numbers rot, and the criterion only checks the shape.** This is the weakest link in the current arrangement: the check verifies that a reference is *present and well-formed*, not that the line number still points at the sentence it claims to | Structural fact | Known limitation | `tests/test_register.cpp:85` (`has_reference` checks shape only) + the corrected references in entries 11, 12, 14 and 16 of this register |
+| 19 | **`framing.hpp` was extracted to eliminate duplication** (POSIX and Win32 each used to carry their own framing state machine). **The new code is compiled and unit-tested**, but the two Win32 **call sites** are still inside `#ifdef _WIN32` and cannot be compiled on Linux | Deliberate trade-off | Deliberate | `include/litearm/framing.hpp:23` + `tests/test_framing.cpp` |
+| 20 | **Packaging has been measured on hardware for the static library only.** `BUILD_SHARED_LIBS=ON` goes through the same install and export rules, but the **shared artifact has never been measured**, and there is no symbol visibility control (`-fvisibility=hidden` plus an export macro), so a shared library exports every symbol | Unverified item | Not done | `CMakeLists.txt:124` (the install section) |
+| 21 | **The first `connect()` after USB re-enumeration times out on the handshake** (`get_firmware` gets no reply); waiting a few seconds and retrying works. Measured on hardware (2026-09-28): that day, after **4** re-plugs / re-passthroughs, **the first connection failed every time** and every retry succeeded; it never happened on a warm link. **The reference implementation does not retry either** (its `connect()` also sends one `0x41`, waits 1.5 s, then `close()`s and throws), so this is **inherited behaviour**, not something the port introduced | Inherited defect | Semantics preserved (not fixed) | `src/arm.cpp:235` (`raw_write(proto::CMD_GET_FIRMWARE)`) + `README.md:690` ("Known inherited gaps") |
+| 22 | **How to clear the latch after a power cycle — measured (2026-09-28, twice on hardware)**. ⚠⚠ **An early version of this entry drew the conclusion too broadly** (from the single "only J4 latched" case it concluded "the root cause is electrical and software cannot clear it"); a later measurement of an all-axis latch **overturned that generalisation**. **Two measurements**:<br>**(a) all seven axes latched**, `joint_fault=0x007F` + `enabled=0` + `err=0` (7/7) + peak torque amplitude about 0.2: `clear_faults()` clears `joint_fault` (`0x007F` goes to `0x0000`, but `faulted` is still 1, because `mode=EMERGENCY` also counts as faulted) then `reset()` clears the rest (`flags` go to zero, `mode=INIT`) then **`enable()` succeeds and the motors immediately start reporting** (axes with `err=0` go from 7/7 to 0/7). So **this sequence is a usable recovery path**.<br>**(b) single-axis latch**, `joint_fault=0x0008` (J4, which the firmware calls `drop_hold`): `clear_faults()` **changes nothing, bit by bit**; `reset()` clears it **but it re-latches within one check period**. ⚠ The difference between the two cases **has not been established** (it may be that `drop_hold` and an ordinary `joint_fault` are not the same bit, or it may relate to "that `enable()` never succeeded and the motor never came online") — so **no unified theory is invented**; both cases are recorded as they happened.<br>**Also measured along the way**: `reset()` **drops enable** (`enabled: 1` goes to `0`); the `err` byte looks like "is this axis's motor reporting" (healthy = 1; bus down / not enabled = 0), but the SDK only passes it through and **does not interpret it** | Unverified item, **partly characterised** | Measured | `TROUBLESHOOTING.md:367` (section 17) + the measured output of `/tmp/live_recover.cpp` and `/tmp/live_reset.cpp` (**not brought into the repository**) |
 
-## 不在本册里的
+## What is not in this register
 
-- **修好且有判据守着的**东西（那是提交历史，不是"未验证"）。
-- **线协议本身的细节**（帧格式、CRC、状态帧布局、双 ID）—— 那些有 `test_protocol.cpp` 逐条钉住，
-  且经跨实现对拍验过 19/19，属"已验证"。
+- **Things that are fixed and guarded by a criterion** — that is commit history, not "unverified".
+- **The details of the wire protocol itself** (frame format, CRC, status-frame layout, dual ID) — those are pinned entry by entry in `test_protocol.cpp` and were checked by the cross-implementation comparison at 19/19, so they count as verified.
 
-## 怎么用这本册子
+## How to use this register
 
-1. 报告里说"测过了"之前，先扫一眼这里有没有相关条目。
-2. 改上面任一条时：**同时**改这里的「状态」列与出处（出处是承重的，不是装饰）。
-3. 新增一条"未验证"很容易，**删掉**一条要能说清"凭什么现在算验过了" ——
-   说不清就别删。
+1. Before saying "it has been tested" in a report, scan here for a related entry.
+2. When you change any entry above, change its **Status** column and its reference **at the same time** — the reference is load-bearing, not decoration.
+3. Adding an "unverified" entry is easy. **Deleting** one requires being able to say why it now counts as verified. If you cannot say it, do not delete it.

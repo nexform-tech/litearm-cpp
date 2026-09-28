@@ -1,6 +1,8 @@
-# 样例
+# Examples
 
-七个可执行的样例。**默认只读** —— 任何会动的都要显式加 `--go`。
+Seven runnable programs that exercise the SDK against a real arm; read this before running any of them.
+
+**Read-only by default.** Anything that moves requires an explicit `--go`.
 
 ```bash
 cd ..
@@ -9,42 +11,41 @@ source env.sh
 ./run_example.sh 02_movej --go
 ```
 
-| 样例 | 内容 | 需要 `--go` |
+| Example | What it does | Needs `--go` |
 | --- | --- | --- |
-| `01_hello` | 握手 + 固件版本 + 读状态 (q/dq/tau/flags/mode) + 当前 TCP | 否 (只读) |
-| `02_movej` | 关节运动: `enable` → `movej` → 等到位 → 读回 | **是** |
-| `03_move_p` | 笛卡尔点到点: 读 TCP → `move_p` → 回读 TCP | **是** |
-| `04_ik_tcp` | `get_tcp` + `ik(pose)` 自洽性检查 | 否 (只读) |
-| `05_ff_tune` | 动力学/控制律调参: `ff_preset` / gs / is / gravity / payload | **是** |
-| `06_cartesian` | 笛卡尔直线 / 圆弧 / 多路点 (固件规划) | **是** |
-| `07_vel_jitter_trace` | 双路逐拍采集: 100Hz 状态流 + 300Hz 固件日志 | **是** |
+| `01_hello` | Handshake, firmware version, state read (q/dq/tau/flags/mode), current TCP | No (read-only) |
+| `02_movej` | Joint motion: `enable` → `movej` → wait for arrival → read back | **Yes** |
+| `03_move_p` | Cartesian point-to-point: read TCP → `move_p` → read TCP back | **Yes** |
+| `04_ik_tcp` | `get_tcp` + `ik(pose)` self-consistency check | No (read-only) |
+| `05_ff_tune` | Dynamics and control-law tuning: `ff_preset` / gs / is / gravity / payload | **Yes** |
+| `06_cartesian` | Cartesian line / arc / multi-waypoint (firmware planning) | **Yes** |
+| `07_vel_jitter_trace` | Dual-channel per-tick capture: 100 Hz state stream + 300 Hz firmware log | **Yes** |
 
-## 共用开关
+## Common flags
 
-所有样例都认这三个:
+All examples accept these three:
 
 ```
---port PORT    串口 (默认自动找 1d50:606f, 也可用环境变量 LITEARM_PORT)
---go           真正 enable/运动/改参 (默认只读连接, 不上力)
---speed S      move 速度倍率 0~1 (默认 0.3)
+--port PORT    Serial port (defaults to autodetecting 1d50:606f, or the LITEARM_PORT environment variable)
+--go           Actually enable / move / write parameters. Without it the connection is read-only and no torque is applied.
+--speed S      Move speed scale 0~1 (default 0.3)
 ```
 
-各样例自己的开关 (用 `--help` 看):
+Per-example flags (run with `--help`):
 
-- `02_movej` 位置参数: 7 个目标关节角 (省略则默认"当前位置 + J3 小步")
+- `02_movej` positional arguments: seven target joint angles. Omitted, it defaults to "current position plus a small step on J3".
 - `07_vel_jitter_trace`: `--dist` `--dur` `--dir` `--tag` `--ff-mask`
 
-## 安全约定
+## Safety conventions
 
-- **默认只读**: 不加 `--go` 时样例只连接、只查询, 一个动作命令都不发。
-- **小步可回退**: 需要动的样例默认都只走 1cm / 0.1rad 这种小步。
-- **跑完刻意不 `disable()`** (02/03/06/07): 该位形失能会让臂因自重坠回, 保持使能持位才是
-  安全终态。急停要在手边。
-- **不可逆命令**: `05_ff_tune` 会调 `save_params()` (**写 flash**)。别在已标定的臂上随手跑。
+- **Read-only by default.** Without `--go` an example only connects and queries; it sends no motion command at all.
+- **Small steps you can back out of.** Examples that move default to a small step such as 1 cm / 0.1 rad.
+- **They deliberately do not `disable()` when finished** (02/03/06/07). Disabling at those poses lets the arm fall back under its own weight, so staying enabled and holding position is the safe end state. Keep the emergency stop within reach.
+- **Irreversible command.** `05_ff_tune` calls `save_params()`, which **writes flash**. Do not run it casually on a calibrated arm.
 
-## 从 Python 样例迁移
+## Migrating from the Python examples
 
-对应关系:
+Correspondence:
 
 | Python | C++ |
 | --- | --- |
@@ -55,7 +56,4 @@ source env.sh
 | `with arm.zero_g():` | `{ auto zg = arm.zero_g(); ... }` |
 | `for jp in arm.params.all_joint_params()` | `for (const auto& jp : arm.params().all_joint_params())` |
 
-`07_vel_jitter_trace` 是唯一做了**有意删减**的一个: Python 版还带"方向 IK 预检 +
-终点软限位余量门槛"和四段 A/B 序列 (`--legs`)。那些预检要用 PC 侧模型, 而本包的定位是
-**不做 PC 侧运动学** (重型计算全在固件里) —— 故 C++ 版只保留"一次平移 + 双路采集"主干,
-把方向选择交给调用方。
+`07_vel_jitter_trace` is the only example with a **deliberate omission**. The Python version also carries a "directional IK precheck plus an end-point soft-limit margin gate" and a four-leg A/B sequence (`--legs`). Those prechecks need a PC-side model, and this package's stated position is that it **does no PC-side kinematics** — the heavy computation all lives in the firmware — so the C++ version keeps only the "one translation plus dual-channel capture" trunk and leaves the choice of direction to the caller.

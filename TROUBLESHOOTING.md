@@ -1,356 +1,424 @@
-# litearm-cpp 现场排查手册
+This is the troubleshooting guide for the `litearm` C++ SDK, which drives the
+7-axis arm over the serial line protocol — read it when `connect()`,
+`enable()`, or a motion command fails, misbehaves, or returns something you
+cannot explain, and follow it from symptom to cause to remedy.
 
-每一条都是同样的三拍: **现象 → 原因 → 怎么办**。先从下面的速查表进。
+# litearm-cpp field troubleshooting manual
 
-建议的排查顺序: 先看**错误码** (§4 提醒了两个容易混淆的码空间), 再看**链路诊断计数**
-(§11), 最后才怀疑线缆。
+Every entry follows the same three beats: **symptom → cause → what to do**.
+Start with the quick-reference table below.
 
-> 本文件是上游 `litearm-python/TROUBLESHOOTING.md` 的 C++ 版。现象与原因是**固件行为**,
-> 与语言无关; 文中的入口名已按 C++ API 改写 (`arm.model().commit()` 这类)。
-> ⚠ 上游末尾那节"尚未验证"的事项**在本移植中同样未被验证** —— 不要因为换了个语言就
-> 假定它们已经验过。详见 §16。
+Recommended order of investigation: look at the **error code** first (§4 warns
+about two error-code spaces that are easy to confuse), then the **link
+diagnostic counters** (§11), and only then suspect the cable.
 
-## 速查表
+> This file is the C++ version of the upstream
+> `litearm-python/TROUBLESHOOTING.md`. The symptoms and causes are **firmware
+> behavior** and are language-independent; the entry-point names here have
+> been rewritten for the C++ API (things like `arm.model().commit()`).
+> **Warning:** the "not yet verified" items in the upstream document's last
+> section are **equally unverified in this port** — do not assume they have
+> been verified just because the language changed. See §16.
 
-| 你看到什么 | 去哪节 |
+## Quick-reference table
+
+| What you see | Which section |
 | --- | --- |
-| `connect()` 打不开端口 / 找不到设备 | §1 |
-| `connect()` 报固件版本不符 | §1 |
-| `enable()` 被拒 | §2 |
-| 子进程里的命令超时; 重试"有时候能成" | §3 |
-| 子进程里的读数**永远不变**, 却不报错 | §3 |
-| 拿到 `ERR{0x02,0x03}`, 判不出是哪一种含义 | §4 |
-| "3"这个数在两处含义不同 | §4 |
-| 连续下发笛卡尔命令会丢应答 | §5 |
-| `move_c()` 圆弧失败 | §6 |
-| 笛卡尔精度与预期差很远 | §7 |
-| 一个解释不了的恒定笛卡尔偏移 | §8 |
-| `movej` 返回时状态还差一点点 | §9 |
-| `last_reset_reason()` 返回空串 | §10 |
-| `kin_bench` 的计数器全是 0 | §11 |
-| `zero_g` 之后立刻发的运动命令被拒 | §12 |
-| `move_js` / `send_mit` 之后臂慢慢软下去 | §13 |
-| `enter_dfu()` 之后烧录失败 | §14 |
-| `set_speed` / `set_joint_limits` 的行为反直觉 | §15 |
-| 想知道还有哪些没验证过 | §16 |
-| **掉电重启后 `enable()` 回 `ERR{0x10,0x06}`** | §17 |
+| `connect()` cannot open the port / cannot find the device | §1 |
+| `connect()` reports a firmware version mismatch | §1 |
+| `enable()` is rejected | §2 |
+| Commands in a forked child time out; a retry "sometimes works" | §3 |
+| Readings in a forked child **never change**, yet no error is raised | §3 |
+| You get `ERR{0x02,0x03}` and cannot tell which meaning applies | §4 |
+| The number "3" means two different things | §4 |
+| Back-to-back Cartesian commands lose replies | §5 |
+| `move_c()` arc fails | §6 |
+| Cartesian accuracy is far from what you expect | §7 |
+| An unexplained constant Cartesian offset | §8 |
+| The state still trails a little when `movej` returns | §9 |
+| `last_reset_reason()` returns an empty string | §10 |
+| `kin_bench` counters are all 0 | §11 |
+| A motion command sent right after `zero_g` is rejected | §12 |
+| The arm slowly goes soft after `move_js` / `send_mit` | §13 |
+| Flashing fails after `enter_dfu()` | §14 |
+| `set_speed` / `set_joint_limits` behave counter-intuitively | §15 |
+| You want to know what else is unverified | §16 |
+| **After a power cycle, `enable()` returns `ERR{0x10,0x06}`** | §17 |
 
 ---
 
-## 1. `connect()` 连不上
+## 1. `connect()` will not connect
 
-**现象**: `TransportError` (打不开端口 / 找不到设备) 或 `FirmwareMismatchError` (版本不符)。
+**Symptom**: `TransportError` (cannot open the port / cannot find the device)
+or `FirmwareMismatchError` (version mismatch).
 
-| 原因 | 怎么确认 |
+| Cause | How to confirm |
 | --- | --- |
-| 没找到设备 —— 没插、没驱动、不是 `1d50:606f` | `lsusb`; 单独调 `litearm::find_cdc_port()` 看它返回什么 |
-| 端口被占 —— 另一个进程或会话还开着 | Linux 上 `fuser /dev/ttyACM0`; Windows 上独占由 OS 强制, 拿不到就是打不开 |
-| 固件太旧 (< 1.5.0) 或版本串不合约定 | 读 `FirmwareMismatchError` 的消息 —— 它把**实际看到的**版本串引出来了 |
+| Device not found — not plugged in, no driver, not `1d50:606f` | `lsusb`; call `litearm::find_cdc_port()` on its own and see what it returns |
+| Port already in use — another process or session still holds it open | On Linux, `fuser /dev/ttyACM0`; on Windows exclusivity is enforced by the OS, so if you cannot get it, you cannot open it |
+| Firmware too old (< 1.5.0), or the version string does not follow the convention | Read the `FirmwareMismatchError` message — it quotes the version string it **actually saw** |
 
-**怎么办**: `FirmwareMismatchError` 就烧 `Litearm1.5.0` 或更高; 端口被占就把占着的那个关掉。
+**What to do**: for `FirmwareMismatchError`, flash `Litearm1.5.0` or later; if
+the port is in use, close whatever is holding it.
 
-⚠ 设备**重新枚举** (拔插、`enter_dfu()` 之后、真断电重启) 会让 `/dev/ttyACM*`
-**变号**。一个把 `LITEARM_PORT` 写死的脚本此刻指向一个不存在的端口 ——
-这就是"刚才还好好的"最常见的原因。
+**Warning:** a device **re-enumeration** (unplug/replug, after `enter_dfu()`,
+a real power cycle) changes the `/dev/ttyACM*` **number**. A script with
+`LITEARM_PORT` hard-coded now points at a port that does not exist — this is
+the most common cause of "it worked a moment ago".
 
-⚠ 本库**不读任何环境变量**: `LITEARM_PORT` 只是 `env.sh` / 样例那一层在用的东西。
+**Warning:** this library **reads no environment variables**: `LITEARM_PORT`
+is only something the `env.sh` / sample layer uses.
 
 ---
 
-## 2. `enable()` 被拒
+## 2. `enable()` is rejected
 
-**现象**: `enable(attempts)` 抛 `CommandRejectedError`。
+**Symptom**: `enable(attempts)` throws `CommandRejectedError`.
 
-**原因与处置**: `attempts` 只对**白名单**里的码重试 —— 只有下面标"可重试"的那一个会重发。
-其余每个码, 重发**什么都不会发生**, 只是浪费时间。
+**Cause and remedy**: `attempts` retries only the codes on a **whitelist** —
+only the one marked "retryable" below is resent. For every other code,
+resending **does nothing at all** and only wastes time.
 
-| 码 | 含义 | 怎么办 |
+| Code | Meaning | What to do |
 | --- | --- | --- |
-| `ERR{0x10,0x03}` | 瞬时失败 (固件白名单里唯一可重试的) | 交给 `attempts`, 或稍后重发 |
-| `ERR{0x10,0x06}` | **锁存**故障 —— 重发无用 | 先 `reset()`, 再查是哪一轴 (`st->joint_fault` / `st->fault_axes()`) |
-| `ERR{0x10,0x07}` | 重发无用 | 查固件代码表 |
-| `ERR{0x10,0x00}` | **固件没有这条命令** | 固件太旧, 升级 |
+| `ERR{0x10,0x03}` | Transient failure (the only retryable one on the firmware's whitelist) | Leave it to `attempts`, or resend later |
+| `ERR{0x10,0x06}` | **Latched** fault — resending is useless | Call `reset()` first, then find out which axis it is (`st->joint_fault` / `st->fault_axes()`) |
+| `ERR{0x10,0x07}` | Resending is useless | Consult the firmware code table |
+| `ERR{0x10,0x00}` | **The firmware does not have this command** | Firmware too old, upgrade it |
 
-⚠ 一个常被混进来的近亲: **臂未使能时 `movej` 会被拒, 回 `ERR[01,3]`**, 而它的消息同时
-指向**两种**可能 —— "未使能 **或** EMERGENCY 锁存"。别只读前半句。
+**Warning:** a close relative that often gets mixed in here: **when the arm is
+not enabled, `movej` is rejected with `ERR[01,3]`**, and its message points at
+**two** possibilities at once — "not enabled **or** EMERGENCY latched". Do not
+read only the first half of it.
 
 ---
 
-## 3. fork 出来的子进程行为诡异
+## 3. A forked child process behaves strangely
 
-**原因**: `fork` **不复制线程**, 但**复制文件描述符**。于是在子进程里, 命令**真的会发到线上**,
-而父进程的读线程会把应答吃掉。见 [README](README.md) 的多进程一节。
+**Cause**: `fork` **does not copy threads**, but it **does copy file
+descriptors**. So in the child, commands **really do go out on the wire**, and
+the parent's read thread eats the replies. See the multi-process section of
+the [README](README.md).
 
-**怎么认出来**:
+**How to recognize it**:
 
-| 现象 | 解释 |
+| Symptom | Explanation |
 | --- | --- |
-| 命令"超时"了, 但重试"有时候能成" | 命令**确实发出去了**; 应答被父进程读了 ⇒ 那次重试是**重复下发** |
-| `get_state()` 不报错, 但数值**永远不变** | 它静默返回继承来的**陈旧**值 —— 最隐蔽的一种 |
-| 子进程里 `connect()` 抛错 | 父进程还占着端口 ⇒ 父进程得先 `close()` |
-| 任何命令立刻抛 `ForkedSessionError` | ✅ 守卫**在正常工作**, 不是故障 |
+| A command "times out", but a retry "sometimes works" | The command **did go out**; the parent read the reply ⇒ that retry was a **duplicate send** |
+| `get_state()` raises no error, but the values **never change** | It silently returns the inherited **stale** values — the most insidious case |
+| `connect()` throws in the child | The parent still holds the port ⇒ the parent must `close()` first |
+| Any command immediately throws `ForkedSessionError` | The guard **is working correctly**; this is not a fault |
 
-**怎么办**: 父进程 `close()` 释放端口, 再 `fork`, 然后在子进程里**新建**一个 `Arm`。
+**What to do**: have the parent call `close()` to release the port, then
+`fork`, and then **construct a new** `Arm` in the child.
 
-⚠ C++ 里还有一层: 子进程里 `close()` **故意泄漏**两个句柄 (`Ack` 与传输层) —— 销毁它们
-会永久挂死 (详见 README 那一节)。这是有界的、刻意的。
+**Warning:** in C++ there is one more layer: in the child, `close()`
+**deliberately leaks** two handles (`Ack` and the transport layer) —
+destroying them would hang forever (see that README section). The leak is
+bounded and intentional.
 
 ---
 
-## 4. 两个容易混淆的错误码
+## 4. Two error codes that are easy to confuse
 
-### `ERR{0x02,0x03}` 是二义的
+### `ERR{0x02,0x03}` is ambiguous
 
-**同一对 `(命令, 码)` 在固件里有两个完全不同的出处**: 既表示"未使能 / EMERGENCY 锁存",
-也表示"逆解不可达 / 解非法"。
+**The same `(command, code)` pair has two completely different origins in the
+firmware**: it means both "not enabled / EMERGENCY latched" and "IK
+unreachable / invalid solution".
 
-**怎么办**: 收到它**不代表**臂被失能了。去看**当前状态** (`st->enabled()` / `st->mode`),
-而不是看码 —— 臂是使能的话, 就是 IK 那一支。
+**What to do**: receiving it **does not mean** the arm has been disabled. Look
+at the **current state** (`st->enabled()` / `st->mode`) instead of at the code
+— if the arm is enabled, you are on the IK branch.
 
-### 两个都跑 1–6 的码空间
+### Two code spaces that both run 1–6
 
-| 出处 | 含义 |
+| Origin | Meaning |
 | --- | --- |
-| `0x4E` 应答里的 `err` 字段 (`CartPlan::err`) | **规划结果本身**: 不可达 / 共线 / 超容量 / 越限 |
-| `RSP_ERR` 的第二个字节 | **门禁原因码**: 未使能 `0x03` / 拖动示教中 `0x04` / `drop_hold` `0x06` |
+| The `err` field in a `0x4E` reply (`CartPlan::err`) | **The planning result itself**: unreachable / collinear / over capacity / out of limits |
+| The second byte of `RSP_ERR` | **Gating reason code**: not enabled `0x03` / drag teaching in progress `0x04` / `drop_hold` `0x06` |
 
-**两者的取值都是 1–6, 而含义毫不相干。** 拿到一个"3", 先问它是从哪条路来的。
-
----
-
-## 5. 连续下发笛卡尔命令会丢应答
-
-**现象**: 连着发几条 `move_l` / `move_path` 之后, 其中一条抛 `CartReplyLostError`
-("结局未知"), 或者后续应答**错位** (一条命令的答案被下一条收走)。真机 3/3 复现。
-
-**原因**: 固件同时只持有**一个**待规划槽位 —— 它不是队列。被取代那条的取消应答会互相覆盖,
-于是一条缺失的应答就把整个配对序列错开。**根因在固件, 不在本库。**
-
-**怎么办**: 笛卡尔命令**串行下发** —— 等一条跑完再发下一条。本库在**单个进程内**已经把调用
-串行化了, 所以正常用法碰不到; 跨进程/多客户端并发才会。
+**Both take values from 1–6, and their meanings have nothing to do with each
+other.** When you get a "3", first ask which path it came from.
 
 ---
 
-## 6. `move_c()` 圆弧失败
+## 5. Back-to-back Cartesian commands lose replies
 
-**现象**: 抛 `CartesianPlanError`, 而臂**一步没动**。
+**Symptom**: after sending several `move_l` / `move_path` commands in a row,
+one of them throws `CartReplyLostError` ("outcome unknown"), or later replies
+get **misaligned** (one command's answer is collected by the next one).
+Reproduced 3 out of 3 times on real hardware.
 
-| `err` | 原因 |
+**Cause**: the firmware holds only **one** pending-planning slot at a time —
+it is not a queue. The cancellation replies of the superseded command
+overwrite each other, so a single missing reply shifts the whole pairing
+sequence. **The root cause is in the firmware, not in this library.**
+
+**What to do**: send Cartesian commands **serially** — wait for one to finish
+before sending the next. The library already serializes calls **within a
+single process**, so normal use never hits this; only cross-process or
+multi-client concurrency does.
+
+---
+
+## 6. `move_c()` arc fails
+
+**Symptom**: `CartesianPlanError` is thrown, and the arm **does not move at
+all**.
+
+| `err` | Cause |
 | --- | --- |
-| `2` | **三点共线** (或接近共线) —— 圆心跑到无穷远 |
-| `1` | IK 无解。从**完全伸直的 `home` 姿态** (奇异位形) 出发**必然**如此; 那是固件在正确地做事, 不是缺陷 |
-| `3` | 超容量 / 不可达 |
+| `2` | **The three points are collinear** (or nearly collinear) — the circle center runs off to infinity |
+| `1` | No IK solution. Starting from the **fully extended `home` pose** (a singular configuration) **always** produces this; the firmware is doing the right thing, this is not a defect |
+| `3` | Over capacity / unreachable |
 
-**怎么办**: 取三个不共线的点; 从奇异位形出发时先离开奇异位形。
+**What to do**: pick three non-collinear points; when starting from a singular
+configuration, move out of the singular configuration first.
 
-⚠ `move_c(start, via, goal)` 里的 **`start` 必须与调用时的实测 TCP 一致**
-(容差 6 mm / 0.03 rad)。它不是自由的"从这里开始"参数 —— 它**要跟现实对账**, 所以拿一个
-运动途中的 TCP 当起点会被拒。
-⚠ **`via` 的姿态被忽略**; 只有它的位置参与定圆。
-
----
-
-## 7. 笛卡尔精度不是一个数
-
-**末端残差取决于 [距离 x 速度 x 载荷姿态]**, 不是某个固定的设备指标, 而且随载荷变化明显。
-
-**怎么办**: 任何精度对比都必须用**同一个位姿、同一套约定、同一个载荷** ——
-否则你量到的是位姿差或载荷差, 不是精度差。
+**Warning:** the **`start` in `move_c(start, via, goal)` must match the
+measured TCP at the time of the call** (tolerance 6 mm / 0.03 rad). It is not
+a free "start from here" parameter — it **is reconciled against reality**, so
+using a TCP from mid-motion as the start point is rejected. **Warning:**
+**`via`'s orientation is ignored**; only its position takes part in defining
+the circle.
 
 ---
 
-## 8. 恒定笛卡尔偏移 —— 先查 `payload_mass`
+## 7. Cartesian accuracy is not a single number
 
-**现象**: 笛卡尔位姿带一个约 8 mm 的恒定偏移, 与协议和规划器都无关。
+**The end-effector residual depends on [distance x speed x payload pose]**. It
+is not some fixed device specification, and it varies noticeably with the
+payload.
 
-**原因**: 设备里留着一条过期的 `payload_mass = 1.0` (出厂默认应是 `0.0`)。
-固件的动力学补偿用的就是这个质量, 于是工具系被系统性地顶偏。
-
-**怎么办**: 换负载之后**总是**要调 `set_payload()`。看到一个解释不了的恒定偏移,
-先用 `get_ff_scalar(4)` 把 `payload_mass` 读回来, 再怀疑别的。
-
----
-
-## 9. `movej` 返回时还没有完全停稳
-
-**现象**: `movej` 一返回就读状态, 每个轴都还剩一点点残差。
-
-**原因**: `movej` 是在**到位判据**满足时返回的 —— 各轴都在 `q_tol` 之内, 且速度连续
-`arrive_frames` 帧安静。那一刻臂还没有完全静止。
-
-实测 (把 J6 开到 0.7): 返回那一刻是 **0.6884**, 5 秒内自行收敛到 **0.6991** 并在那里保持
-20 秒。约 0.012 rad (0.7 度), 落在 `q_tol = 0.03` 之内 —— **这是设计如此, 不是漂移**。
-
-**怎么办**: 需要精确值就等几秒再读, 或者自己把 `q_tol` 收紧。
+**What to do**: any accuracy comparison must use **the same pose, the same
+conventions, and the same payload** — otherwise you are measuring a pose
+difference or a payload difference, not an accuracy difference.
 
 ---
 
-## 10. `last_reset_reason()` 返回空串
+## 8. A constant Cartesian offset — check `payload_mass` first
 
-**这是正确行为, 不是解析失败。** 开机签名只在**真正的 MCU 复位之后**发**一次**, 而
-`reset()` 不会让它重发。日常使用拿到空串是预期内的。
+**Symptom**: the Cartesian pose carries a constant offset of about 8 mm,
+unrelated to the protocol and the planner.
 
-只有在**真复位之后很快连上**时它才有值 (`"normal"` / `"iwdg-rst"`)。
+**Cause**: the device still holds a stale `payload_mass = 1.0` (the factory
+default should be `0.0`). The firmware's dynamics compensation uses that mass,
+so the tool frame is systematically pushed off.
 
-⚠ 相关的澄清: **`reset()` 是软件状态复位, 不是 MCU 重启。** 它**不**触发 USB 重新枚举,
-**同一个 `Arm` 对象之后照常可用**, 签名也不会重发。
-
----
-
-## 11. `kin_bench` 的计数器全是 0
-
-**现象**: `arm.diag().kin_bench()` 的链路诊断计数 (`crc_errors()` / `reply_dropped()` /
-`can_tx_fail()` …) 全读 0。
-
-**原因**: 这**不一定**说明链路干净。全 0 也可能意味着"什么都没读到" —— 而那种失败是
-**静默的**: 不报错, 只给一个看起来很健康的 0。
-
-**怎么办**: 拿它当链路体检之前, 先确认帧真的在到 —— 看 `Msg.hz` / `Msg.timestamp`。
-两个都是 `0.0` 就说明该类帧**从来没到过**。
-
-⚠ 这些计数器里, `crc` 是活的且精确; `can_tx_fail` 可能大得惊人 (固件上报的累计值,
-其确切定义尚未核实)。
+**What to do**: after changing the payload, **always** call `set_payload()`.
+When you see an unexplained constant offset, read `payload_mass` back with
+`get_ff_scalar(4)` first, and suspect other things after that.
 
 ---
 
-## 12. `zero_g` 的保活周期与异步退出
+## 9. `movej` returns before the arm has fully settled
 
-| 现象 | 原因 | 怎么办 |
+**Symptom**: read the state the moment `movej` returns and every axis still
+has a small residual.
+
+**Cause**: `movej` returns when the **arrival criterion** is met — every axis
+is within `q_tol`, and the velocity has been quiet for `arrive_frames`
+consecutive frames. At that moment the arm has not come to a complete stop
+yet.
+
+Measured (driving J6 to 0.7): at the moment of return it reads **0.6884**;
+within 5 seconds it converges on its own to **0.6991** and holds there for 20
+seconds. That is about 0.012 rad (0.7 degrees), inside `q_tol = 0.03` — **this
+is by design, not drift**.
+
+**What to do**: if you need an exact value, wait a few seconds before reading,
+or tighten `q_tol` yourself.
+
+---
+
+## 10. `last_reset_reason()` returns an empty string
+
+**This is correct behavior, not a parse failure.** The boot signature is sent
+**once**, only **after a real MCU reset**, and `reset()` does not make it
+repeat. Getting an empty string in everyday use is expected.
+
+It only has a value when you **connect soon after a real reset** (`"normal"` /
+`"iwdg-rst"`).
+
+**Warning**, a related clarification: **`reset()` is a software state reset,
+not an MCU reboot.** It does **not** trigger USB re-enumeration, **the same
+`Arm` object stays usable afterwards**, and the signature is not resent.
+
+---
+
+## 11. `kin_bench` counters are all 0
+
+**Symptom**: the link diagnostic counters from `arm.diag().kin_bench()`
+(`crc_errors()` / `reply_dropped()` / `can_tx_fail()` …) all read 0.
+
+**Cause**: this **does not necessarily** mean the link is clean. All zeros can
+also mean "nothing was ever read" — and that kind of failure is **silent**: no
+error, just a 0 that looks perfectly healthy.
+
+**What to do**: before treating this as a link health check, confirm that
+frames are actually arriving — look at `Msg.hz` / `Msg.timestamp`. If both are
+`0.0`, that class of frame **has never arrived**.
+
+**Warning:** among these counters, `crc` is live and accurate; `can_tx_fail`
+can be surprisingly large (a cumulative value reported by the firmware, whose
+exact definition has not been verified).
+
+---
+
+## 12. `zero_g` keep-alive period and asynchronous exit
+
+| Symptom | Cause | What to do |
 | --- | --- | --- |
-| 拖动示教期间运动命令被拒 | 固件看门狗语义: 只有查询能过 | 查询不受影响; **急停 / 失能是例外**, 永远放行 |
-| `period=0.5` 被本地拒 | 保活必须**小于 0.10 s**; 固件在 0.10 s 内没收到重发就掉进 fail-soft | `period` 用 `[0.005, 0.10)`; 默认 `0.04` 就好 |
-| `zero_g_stop()` 之后立刻发的运动命令被拒 | **退出是异步的** —— 调用返回后固件还需要一点时间收尾 | 发运动命令前稍等一下 |
+| Motion commands are rejected during drag teaching | Firmware watchdog semantics: only queries get through | Queries are unaffected; **emergency stop / disable are the exceptions** and are always let through |
+| `period=0.5` is rejected locally | The keep-alive must be **under 0.10 s**; if the firmware does not receive a resend within 0.10 s it falls into fail-soft | Use a `period` in `[0.005, 0.10)`; the default `0.04` is fine |
+| A motion command sent right after `zero_g_stop()` is rejected | **The exit is asynchronous** — the firmware needs a little time to wind down after the call returns | Wait a moment before sending motion commands |
 
-保活由后台线程自动重发。若因**写失败**断掉, 退出时会**抛错**, 不会静默失败。
-状态可从只读的 `zero_g_active()` / `zero_g_error()` 取。
-
----
-
-## 13. `move_js` / `send_mit` 之后臂慢慢软下去
-
-**原因**: 这几条是**连续伺服 / 透传**入口, **绕过运动规划**, 且**保活要靠调用方**:
-**按 >=10 Hz 重发**。0.1 s 看门狗过期后固件进入 fail-soft (刚度降低 + τ=0), 臂在重力下
-慢慢下沉 —— 实测下沉量与"0.6 倍刚度 + τ=0"的估计吻合。
-
-**怎么办**: 只要运动还需要, 就按 >=10 Hz 持续重发。
-
-⚠ 数组长度必须是 **`n`** (本地检查), 且**有限** —— `NaN` / `Inf` 会让固件整帧拒收
-(`ERR{cmd,0x02}`)。`send_mit` / `send_mit_all` / `move_js` 都有这道检查。
-⚠ `move_js` 里的 `dq` 是**速度参考**, 不是限幅。
+A background thread resends the keep-alive automatically. If it stops because
+of a **write failure**, exiting **throws**; it does not fail silently. You can
+read the state from the read-only `zero_g_active()` / `zero_g_error()`.
 
 ---
 
-## 14. `enter_dfu()` 之后
+## 13. The arm slowly goes soft after `move_js` / `send_mit`
 
-- **不能立刻烧录**: `ACK{0x15}` 只表示"已登记"; 设备得先**重新枚举**成 `0483:DF11`。
-  马上去跑烧录会失败; 等十几秒再试就成了。
-- 判断设备是否真的走了, 要看**读或写抛错** —— **不是** `is_open()`, **也不是**"读到 0 字节"。
-- 成功返回之后, **这个 `Arm` 就废了**: 每个入口都抛 `ArmIsInDfuError` (`close()` 除外)。
-  烧完固件要**新建一个 `Arm`**。
-- 使能中调用会被**本地拒绝** (跳转会停 TIM3 ⇒ 电机 100ms 内松开, 有负载会下垂)。
+**Cause**: these are **continuous-servo / passthrough** entry points that
+**bypass motion planning**, and **the keep-alive is the caller's job**:
+**resend at >=10 Hz**. Once the 0.1 s watchdog expires the firmware enters
+fail-soft (reduced stiffness + τ=0) and the arm slowly sags under gravity —
+the measured sag matches the estimate for "0.6x stiffness + τ=0".
 
----
+**What to do**: as long as the motion is still needed, keep resending at
+>=10 Hz.
 
-## 15. 两个反直觉的参数行为
-
-**`set_speed(percent)` 收的是整数百分比, 不是倍率。**
-`set_speed(1)` 意思是 **1% 速度** —— 按 0..1 的思维去调, 你会得到一台爬行的臂。
-它还是**全局且持续**的 (一直生效到某个 reset 语义的调用), 与 `movej(speed=0..1)` 的
-**单条轨迹倍率**不是一回事。实参必须是 **0..100 的 `int`**; 越界会被本地拒
-(C++ 的形参就是 `int`, 不存在"传 bool"那类问题)。
-
-**`set_joint_limits()` 不是幂等的。**
-固件**只允许收窄**, 所以把**当前**的值原样写回去会被判成"放宽请求"而拒绝 (`ERR[23,2]`)。
-⇒ 别拿它做"读-改-写"的往返校验。
+**Warning:** the array length must be **`n`** (checked locally), and the
+values must be **finite** — `NaN` / `Inf` make the firmware reject the whole
+frame (`ERR{cmd,0x02}`). `send_mit` / `send_mit_all` / `move_js` all have this
+check. **Warning:** `dq` in `move_js` is a **velocity reference**, not a
+clamp.
 
 ---
 
-## 16. 尚未验证
+## 14. After `enter_dfu()`
 
-下面这些**都不算已验证**:
+- **You cannot flash immediately**: `ACK{0x15}` only means "registered"; the device must first **re-enumerate** as `0483:DF11`. Running the flash right away fails; wait ten-odd seconds and it works.
+- To tell whether the device is really gone, look for a **read or write that throws** — **not** `is_open()`, and **not** "read 0 bytes".
+- Once it returns successfully, **this `Arm` is dead**: every entry point throws `ArmIsInDfuError` (except `close()`). After flashing the firmware, **construct a new `Arm`**.
+- Calling it while enabled is **rejected locally** (the jump stops TIM3 ⇒ the motors release within 100 ms, and a load will sag).
 
-- `enter_dfu()` —— 唯一的终态操作; 要恢复就得重烧固件;
-- `save_params()` 的持久化 (它写 flash);
-- `reset_factory()` (它会抹掉调好的参数);
-- `move_c()` 的**成功**路径 —— 没有构造出可靠成功的圆弧;
-- `move_js` / `send_mit` / `send_mit_all` —— 从未在真机上跑过;
-- `set_joint_limits()` 的**实际收窄效果** (只验证过"把旧值写回去会被拒");
-- **失能时 `capture()` 是否总录到 0 拍** —— 这只出现在本仓的现场笔记里, 代码里没有对应的
-  检查或测试; 未复核;
-- **Windows** —— 未验证 (串口后端已实现, 但没在 Windows 上实机跑过);
-- **C++ 移植本身**: 全部测试都是**离线**的 (假传输 + 真 pty), **没有在真臂上跑过** ——
-  这一条与上面那些是两回事, 但同样别假定已验。
+---
 
-### ⚠ 不可逆命令: 别在已标定的臂上跑
+## 15. Two counter-intuitive parameter behaviors
 
-下面四条**都会覆盖或抹掉这台臂逐台辨识的动力学模型**, 而且**没有撤销**:
+**`set_speed(percent)` takes an integer percentage, not a multiplier.**
+`set_speed(1)` means **1% speed** — think in 0..1 terms and you get a crawling
+arm. It is also **global and persistent** (it stays in effect until some call
+with reset semantics), which is not the same thing as the **per-trajectory
+multiplier** of `movej(speed=0..1)`. The argument must be an **`int` in
+0..100**; out-of-range values are rejected locally (the C++ parameter is an
+`int`, so problems like "passing a bool" cannot arise here).
 
-| 命令 | 入口 |
+**`set_joint_limits()` is not idempotent.** The firmware **only allows
+narrowing**, so writing the **current** values back unchanged is judged a
+"widening request" and rejected (`ERR[23,2]`). ⇒ Do not use it for a
+read-modify-write round-trip check.
+
+---
+
+## 16. Not yet verified
+
+None of the following counts as verified:
+
+- `enter_dfu()` — the only terminal operation; recovering from it requires reflashing the firmware;
+- The persistence of `save_params()` (it writes flash);
+- `reset_factory()` (it wipes the tuned parameters);
+- The **success** path of `move_c()` — no reliably succeeding arc was ever constructed;
+- `move_js` / `send_mit` / `send_mit_all` — never run on real hardware;
+- The **actual narrowing effect** of `set_joint_limits()` (only "writing the old values back is rejected" was verified);
+- **Whether `capture()` always records 0 frames while disabled** — this appears only in this repository's field notes; there is no corresponding check or test in the code; not re-checked;
+- **Windows** — unverified (the serial backend is implemented, but it has never been run on a real Windows machine);
+- **The C++ port itself**: all tests are **offline** (fake transport + real pty), and **none has been run on a real arm** — this is a different matter from the items above, but do not assume it is verified either.
+
+### Irreversible commands: do not run them on a calibrated arm
+
+All four of the following **overwrite or erase this arm's individually
+identified dynamics model**, and there is **no undo**:
+
+| Command | Entry point |
 | --- | --- |
 | `0x25` | `arm.save_params()` |
 | `0x32` | `arm.model().commit()` |
 | `0x36` | `arm.params().reset_factory()` |
 | `0x37` | `arm.model().revert()` |
 
-**唯一安全的做法: 在一台标定没有任何价值的板子上做。**
+**The only safe approach: do it on a board whose calibration has no value.**
 
-⚠ 另外, `0x33` `arm.model().set_jm()` **永远不该被调用** —— 它会改写关节映射 (包括符号),
-一个错误就能让臂**乱摆**, 而本地仅有的两条恢复路径 (`revert` / `save_params`) 都在上表里
-⇒ **没有可靠的回退办法**。
+**Warning**, also: `0x33` `arm.model().set_jm()` **should never be called** —
+it rewrites the joint mapping (including signs), a single mistake makes the
+arm **flail**, and the only two local recovery paths (`revert` /
+`save_params`) are both in the table above ⇒ **there is no reliable way
+back**.
 
-⚠ 压测 CAN 链路时只跑 **`candump` (只读) —— 绝不 `cangen`**: `can0` **就是**电机总线。
+**Warning:** when stress-testing the CAN link, run only **`candump`
+(read-only) — never `cangen`**: `can0` **is** the motor bus.
 
 ---
 
-## 17. 掉电重启之后 `enable()` 回 `ERR{0x10,0x06}`（锁存）
+## 17. `enable()` returns `ERR{0x10,0x06}` after a power cycle (latched)
 
-**现象**（2026-09-28 真机实测，两次）：板子掉电 ⇒ 臂失力、靠重力塌下去 ⇒ 重新上电后
-`enable()` 回 `ERR{0x10,0x06}`（锁存，须先 `reset()`，**重发无用**）。
+**Symptom** (measured on real hardware on 2026-09-28, twice): the board loses
+power ⇒ the arm loses force and collapses under gravity ⇒ after power is
+restored, `enable()` returns `ERR{0x10,0x06}` (latched; you must call
+`reset()` first, **resending is useless**).
 
-⚠⚠ **先分清是哪一种** —— 两次实测的形状**不一样，处置也不一样**：
+**Warning:** **work out which kind it is first** — the two measurements have
+**different shapes, and different remedies**:
 
-### 甲、全轴锁存（最常见）
+### Case A: all-axis latch (most common)
 
-```
-joint_fault=0x007F  enabled=0  err=0 (7/7 轴)  最大力矩幅值 ≈ 0.2 N·m(就是噪声)  FB_STALE
-```
-
-**这就是「电机还没使能」的常态**，不是硬件坏了。用这条序列，实测可恢复：
-
-```
-clear_faults()  ->  joint_fault 清掉 (0x007F -> 0x0000)
-                   ⚠ 此时 faulted() 仍为 1 —— 因为 mode=EMERGENCY 也算 faulted
-reset()         -> 其余全清 (flags 归零, mode=INIT)
-enable()        -> 成功; 而且**电机随即开始报数** (err=0 的轴数 7/7 -> 0/7)
+```text
+joint_fault=0x007F  enabled=0  err=0 (7/7 axes)  max torque amplitude ≈ 0.2 N·m (that is just noise)  FB_STALE
 ```
 
-⇒ 判据是 **`enable()` 之后 `err` 是否变成 1**。变了就是真的好了。
+**This is the normal state of "the motors are not enabled yet"**, not broken
+hardware. With this sequence it recovered in the measurements:
 
-### 乙、单轴锁存
-
+```text
+clear_faults()  ->  joint_fault cleared (0x007F -> 0x0000)
+                   Warning: faulted() is still 1 here — because mode=EMERGENCY also counts as faulted
+reset()         -> everything else cleared (flags zeroed, mode=INIT)
+enable()        -> succeeds; and **the motors start reporting immediately** (axes with err=0: 7/7 -> 0/7)
 ```
-joint_fault=0x0008 (第 4 轴)  FAULT + WD_TRIPPED + FB_STALE
-enable() 回 ERR{0x10,0x06}; movej() 回 ERR{0x01,0x06}「掉线刚性持位 (drop_hold)」
+
+⇒ The criterion is **whether `err` becomes 1 after `enable()`**. If it
+changed, the arm is genuinely good.
+
+### Case B: single-axis latch
+
+```text
+joint_fault=0x0008 (axis 4)  FAULT + WD_TRIPPED + FB_STALE
+enable() returns ERR{0x10,0x06}; movej() returns ERR{0x01,0x06} "rigid hold on lost link (drop_hold)"
 ```
 
-实测：`clear_faults()` **逐位无变化**；`reset()` 清得掉**但一个检查周期内就重新锁上**。
+Measured: `clear_faults()` **changes nothing, bit by bit**; `reset()` clears
+it **but it latches again within one check period**.
 
-⚠ 甲、乙两例的**差别尚未查清**（疑似 `drop_hold` 与普通 `joint_fault` 不是同一个位，
-或与「那次 `enable()` 始终没成功、电机没上线」有关）。**本手册不为它们编一套统一理论** ——
-两例都是实测，照实测写。
+**Warning:** the **difference between cases A and B has not been explained**
+(the suspicion is that `drop_hold` and an ordinary `joint_fault` are not the
+same bit, or that it is related to "that `enable()` never succeeded and the
+motor never came online"). **This manual does not invent a unified theory for
+them** — both cases are measurements, and they are written as measured.
 
-### 通用抓手
+### General handles
 
-| 抓手 | 怎么用 |
+| Handle | How to use it |
 | --- | --- |
-| `joint_fault` 位图 | `0x0008` = bit3 = **第 4 轴**（1 起数）。不用整套拆，直接去查那一台 |
-| `fault_axes()` | 同上，返回轴号列表 |
-| **`err` 字节** | 像是「该轴电机**在不在报数**」：健康 = 1，总线断/未使能 = 0。⚠ SDK 只**原样透传**、不解释它，所以当**线索**用，别当结论 |
-| `FB_STALE` 是"当前"还是"历史" | `reset()` 一次立刻再读：**回来了** ⇒ 硬件仍有问题；**没回来** ⇒ 那只是历史锁存 |
+| The `joint_fault` bit map | `0x0008` = bit3 = **axis 4** (1-based). You do not need to tear down the whole set — go and check that one motor |
+| `fault_axes()` | Same, returns the list of axis numbers |
+| The **`err` byte** | Looks like "whether that axis's motor **is reporting**": healthy = 1, bus down / not enabled = 0. Warning: the SDK only **passes it through verbatim** and does not interpret it, so use it as a **clue**, not as a conclusion |
+| Whether `FB_STALE` is "current" or "historical" | Call `reset()` once and read again immediately: **it comes back** ⇒ the hardware still has a problem; **it does not come back** ⇒ it was only a historical latch |
 
-### 两个容易误判的
+### Two things that are easy to misjudge
 
-- **`enabled=1` 不等于"使能成功了"。** 固件在跟某台电机断了联系时会**自己给电把轴抱住**
-  （「掉线刚性持位」）。好处是臂不会坠落；坏处是它**掩盖了"使能其实被拒"**这件事。
-- **`reset()` 会掉使能**（实测 `enabled: 1→0`）。它是**软件状态复位，不是 MCU 重启**
-  （见 §10）：不触发 USB 重新枚举，同一个 `Arm` 对象之后照常可用。
+- **`enabled=1` does not equal "the enable succeeded".** When the firmware loses contact with one of the motors it **powers the axis itself to hold it** ("rigid hold on lost link"). The upside is that the arm does not fall; the downside is that it **masks the fact that "the enable was actually rejected"**.
+- **`reset()` drops the enable** (measured `enabled: 1→0`). It is a **software state reset, not an MCU reboot** (see §10): it does not trigger USB re-enumeration, and the same `Arm` object stays usable afterwards.

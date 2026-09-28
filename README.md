@@ -9,21 +9,20 @@ This repository is the C++ port of
 protocol, the same semantics, the same safety criteria, ported line by line. The test suite
 is likewise fully offline.
 
-> 📖 Full API reference: [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
+> Full API reference: [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
 > field troubleshooting (symptom → cause → fix): [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
-> Both are currently written in Chinese.
 
 ## Highlights
 
-- 🔧 **Zero external dependencies**: only the C++17 standard library and the platform's own
+- **Zero external dependencies**: only the C++17 standard library and the platform's own
   serial API (POSIX termios / Win32). No libserialport, no numpy — the heavy computation
   already lives in the firmware.
-- 📦 **One location**: headers in `include/litearm/`, a single static library `liblitearm.a`.
-- 🔌 **Direct USB**: one cable to the firmware; VID:PID `1d50:606f` is discovered automatically.
-- ⚙️ **The firmware does the heavy lifting**: planning, kinematics and dynamics all live there;
+- **One location**: headers in `include/litearm/`, a single static library `liblitearm.a`.
+- **Direct USB**: one cable to the firmware; VID:PID `1d50:606f` is discovered automatically.
+- **The firmware does the heavy lifting**: planning, kinematics and dynamics all live there;
   the host just sends waypoints and judges arrival.
-- 🦾 **Complete motion API**: joint motion, Cartesian lines/arcs/multi-waypoint paths, freedrive.
-- 🛡️ **Safety built in**: forked children fail closed, an independent emergency-stop path, and
+- **Complete motion API**: joint motion, Cartesian lines/arcs/multi-waypoint paths, freedrive.
+- **Safety built in**: forked children fail closed, an independent emergency-stop path, and
   every irreversible command is called out.
 
 ## Building
@@ -790,10 +789,10 @@ go through the locked `tx_snapshot()` / `tx_count()`.
 
 | Platform | Serial backend | Status |
 | --- | --- | --- |
-| Linux | POSIX termios + `flock` + `poll` | ✅ tested on hardware (including real pty tests) |
-| macOS | POSIX termios + `flock` + `poll` | ✅ same code path; but **port auto-discovery is unavailable** (no sysfs) — pass the port explicitly |
-| Windows | Win32 `CreateFile`/`SetCommState`/`ReadFile`/`WriteFile` | ⚠ implemented but **never verified on Windows**; port auto-discovery is likewise unavailable |
-| Linux / aarch64 | same as Linux (cross-compiled) | ⚠ **toolchain file only, never compiled once** — no aarch64 toolchain on this machine. See "Installing and packaging / Cross-compiling for aarch64" |
+| Linux | POSIX termios + `flock` + `poll` | Tested on hardware (including real pty tests) |
+| macOS | POSIX termios + `flock` + `poll` | Same code path; but **port auto-discovery is unavailable** (no sysfs) — pass the port explicitly |
+| Windows | Win32 `CreateFile`/`SetCommState`/`ReadFile`/`WriteFile` | Implemented but **never verified on Windows**; port auto-discovery is likewise unavailable |
+| Linux / aarch64 | same as Linux (cross-compiled) | **Toolchain file only, never compiled once** — no aarch64 toolchain on this machine. See "Installing and packaging / Cross-compiling for aarch64" |
 
 ⚠ **Scope of hardware acceptance** (2026-09-28): **every reversible feature has been exercised**
 — 14 groups / 68 assertions / 218 frames, **homing before and after every group**, covering the
