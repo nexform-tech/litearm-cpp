@@ -198,7 +198,15 @@ TEST(precheck_home_is_exempt_so_the_recovery_path_stays_open) {
     // 同一个缓存下, movej(0) 被拒…
     CHECK_THROWS_AS(uc.arm->movej(zeros7()), InvalidCommandError);
     // …而 home() 照样发得出去
-    CHECK_NOTHROW(uc.arm->home(0.01));
+    //
+    // ⚠ 超时用**默认值**, 不要写 0.01。本条的主题是"预检豁免", 到达窗口不是被测对象;
+    //   而 0.01s 只够假传输在**轻载**时走完 `CMD_HOME` 之后那 9 帧状态 (3 帧运动中 +
+    //   6 帧停稳)。跑满 27 个用例时机器有负载, `arrive()` 就会超时 —— 2026-09-28 在
+    //   TSan 全套里实测到 `未到位, 超时 0.0s`, 而单跑同一个二进制 10/10 通过。
+    //   ⇒ 那是一条**负载敏感的脆弱用例**, 不是产品缺陷: 收紧超时并不会让判据更严,
+    //     只会在别人机器上随机变红。默认值 (= `move_timeout`, 1.0s) 与本文件外所有
+    //     调用点一致 (见 `test_commands.cpp` / `test_zero_g.cpp`)。
+    CHECK_NOTHROW(uc.arm->home());
     CHECK_EQ(count_cmd(*uc.fake, proto::CMD_HOME), 1);
 }
 
@@ -209,5 +217,5 @@ TEST(precheck_does_not_reject_a_normal_motion_sequence) {
     CHECK_NOTHROW(off->movej(std::vector<double>(7, 0.01), 0.5));
     CHECK_NOTHROW(off->movej_sync(std::vector<double>(7, 0.01), 0.5));
     CHECK_NOTHROW(off->move_p(std::array<double, 6>{0.3, 0.0, 0.35, 0.0, 0.0, 0.0}, 0.5));
-    CHECK_NOTHROW(off->home(0.01));
+    CHECK_NOTHROW(off->home());   // 同前: 默认超时, 别写 0.01 (负载敏感, 见上一条用例)
 }
