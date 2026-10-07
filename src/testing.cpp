@@ -80,6 +80,13 @@ std::vector<uint8_t> make_status(const std::vector<double>& q,
     return proto::pack_frame(proto::RSP_STATUS, body);
 }
 
+// The firmware reports ENABLE in status flags bit9. The SDK exposes it as
+// RobotState::enabled() and the direct-USB component waits on it before its first MOVE_JS,
+// so a double that never sets it turns that wait into a phantom firmware bug.
+uint16_t status_flags(bool enabled) {
+    return enabled ? uint16_t(1u << proto::FLAG_ENABLED_BIT) : uint16_t(0);
+}
+
 FakeTransport::FakeTransport(const std::string& port_in, double timeout_in,
                              const std::string& fw_in, int n_in)
     : port(port_in), timeout(timeout_in), fw(fw_in), n(n_in) {
@@ -293,9 +300,9 @@ void FakeTransport::write_frame(uint8_t cmd, const uint8_t* payload, size_t len)
         const std::vector<uint8_t> b(fw.begin(), fw.end());
         push(proto::pack_frame(proto::RSP_FIRMWARE, b));
         auto_status = true;
-        push(make_status(q, {}, 0, 0, 0, 0, n));
+        push(make_status(q, {}, 0, status_flags(enabled), 0, 0, n));
     } else if (cmd == proto::CMD_GET_STATUS) {
-        push(make_status(q, {}, 1, 0, 0, 0, n));
+        push(make_status(q, {}, 1, status_flags(enabled), 0, 0, n));
     } else if (cmd == proto::CMD_SET_FF_VEC) {     // 存下来供 0x2B 读回
         if (!p.empty()) ff_vec[int(p[0])] = proto::unpack_f32s(p.data(), 1, n);
         push(proto::pack_frame(proto::RSP_ACK, std::vector<uint8_t>{cmd}));
@@ -657,10 +664,10 @@ void FakeTransport::write_frame(uint8_t cmd, const uint8_t* payload, size_t len)
         push(proto::pack_frame(proto::RSP_ACK, std::vector<uint8_t>{cmd}));
         q.assign(size_t(n), 0.0);
         for (int i = 0; i < 3; ++i) {
-            push(make_status(q, std::vector<double>(size_t(n), 1.0), 1, 0, 0, 0, n));
+            push(make_status(q, std::vector<double>(size_t(n), 1.0), 1, status_flags(enabled), 0, 0, n));
         }
         for (int i = 0; i < 6; ++i) {
-            push(make_status(q, std::vector<double>(size_t(n), 0.0), 1, 0, 0, 0, n));
+            push(make_status(q, std::vector<double>(size_t(n), 0.0), 1, status_flags(enabled), 0, 0, n));
         }
     } else if (cmd == proto::CMD_MOVE_J || cmd == proto::CMD_MOVE_J_SYNC) {
         // 0x07 的载荷与 0x01 逐字节相同, 语义差异只在轨迹形状 (同步 vs 每轴独立 S 曲线),
@@ -671,15 +678,15 @@ void FakeTransport::write_frame(uint8_t cmd, const uint8_t* payload, size_t len)
         q = proto::unpack_f32s(p.data(), 0, n);
         // 先 3 拍"运动中"(dq=1) 再 6 拍到位(dq=0) —— 检验 Arm 到位等待
         for (int i = 0; i < 3; ++i) {
-            push(make_status(q, std::vector<double>(size_t(n), 1.0), 1, 0, 0, 0, n));
+            push(make_status(q, std::vector<double>(size_t(n), 1.0), 1, status_flags(enabled), 0, 0, n));
         }
         for (int i = 0; i < 6; ++i) {
-            push(make_status(q, std::vector<double>(size_t(n), 0.0), 1, 0, 0, 0, n));
+            push(make_status(q, std::vector<double>(size_t(n), 0.0), 1, status_flags(enabled), 0, 0, n));
         }
     } else if (cmd == proto::CMD_MOVE_P) {
         push(proto::pack_frame(proto::RSP_ACK, std::vector<uint8_t>{cmd}));
         pose = proto::unpack_f32s(p.data(), 0, 6);
-        push(make_status(q, std::vector<double>(size_t(n), 0.0), 1, 0, 0, 0, n));
+        push(make_status(q, std::vector<double>(size_t(n), 0.0), 1, status_flags(enabled), 0, 0, n));
     } else if (cmd == proto::CMD_GET_TCP) {
         if (tcp_payload_override) {
             push(proto::pack_frame(proto::RSP_TCP, *tcp_payload_override));
@@ -759,7 +766,7 @@ std::optional<proto::Frame> FakeTransport::read_frame(double timeout_in) {
         const double now = now_s();
         if (now - auto_status_last_ < auto_status_period) return std::nullopt;
         auto_status_last_ = now;
-        fr = proto::unpack_frame(make_status(q, {}, 1, 0, 0, 0, n));
+        fr = proto::unpack_frame(make_status(q, {}, 1, status_flags(enabled), 0, 0, n));
     }
     return stamp_status(fr);
 }
