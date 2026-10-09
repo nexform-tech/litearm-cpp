@@ -112,6 +112,12 @@ if(LITEARM_BUILD_TESTS)
         get_filename_component(name ${src} NAME_WE)
         add_executable(${name} ${src})
         target_link_libraries(${name} PRIVATE litearm_test_support)
+        # test_example_args 验 examples/_common.cpp 的参数解析 ⇒ 把那份源码直接编进来。
+        # 不依赖 LITEARM_BUILD_EXAMPLES (打包/交叉构建里 examples 可能是 OFF, 那时
+        # 配置仍必须成功, 故不走 litearm_examples_common 这个 target)。
+        if(name STREQUAL "test_example_args")
+            target_sources(${name} PRIVATE examples/_common.cpp)
+        endif()
         add_test(NAME ${name} COMMAND ${name})
         # 有用例 SKIP 时框架返回 77 —— 让 ctest 报 `***Skipped` 而不是 "Passed"。
         # ⚠ 这不是洁癖: ctest 默认**吞掉通过用例的全部输出**, 于是"11 个用例被跳过"在
