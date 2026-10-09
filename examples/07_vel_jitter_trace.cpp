@@ -166,10 +166,22 @@ int main(int argc, char** argv) {
             });
 
             // ---- 路②: 开 300Hz 固件日志, 然后发运动 ----
-            arm.log().start(LOG_TICKS);
-            const double t_move0 = now_s();
-            const CartPlan plan = arm.move_l(goal, args.speed);
-            const double move_s = now_s() - t_move0;
+            // ⚠ 线程必须在**所有路径**上 stop+join: move_l 抛异常 (固件拒绝规划、超时
+            //   都是正常工况) 时若不收线程, `std::thread` 析构会对 joinable 线程直接
+            //   `std::terminate` —— 实测就是 core dump (exit 134), 且 stdout 还在块缓冲里,
+            //   错误信息也一起丢。
+            CartPlan plan{};
+            double move_s = 0.0;
+            try {
+                arm.log().start(LOG_TICKS);
+                const double t_move0 = now_s();
+                plan = arm.move_l(goal, args.speed);
+                move_s = now_s() - t_move0;
+            } catch (...) {
+                stop.store(true);
+                grabber.join();
+                throw;
+            }
             stop.store(true);
             grabber.join();
 
