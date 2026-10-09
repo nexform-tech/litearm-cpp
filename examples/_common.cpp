@@ -13,6 +13,16 @@ bool is_known_switch(const std::string& a) {
     return a == "--port" || a == "--go" || a == "--speed" || a == "-h" || a == "--help";
 }
 
+/// 整串能否解析成一个数 —— 负数 (如 `-0.25`) 是**参数**, 不是开关。
+/// 只看"开头是 `-`"会把 `./02_movej --go 0.1 0 -0.1 0 0 0 0` (02 头注释里的用法)
+/// 整个挡死; `--dist -0.04` 同理 (实测踩过)。
+bool parses_as_number(const std::string& a) {
+    if (a.empty()) return false;
+    char* end = nullptr;
+    std::strtod(a.c_str(), &end);
+    return end != a.c_str() && *end == '\0';
+}
+
 }  // namespace
 
 bool parse_args(int argc, char** argv, const std::string& desc, Args* out) {
@@ -40,10 +50,10 @@ bool parse_args(int argc, char** argv, const std::string& desc, Args* out) {
             std::string val = "1";
             if (i + 1 < argc) {
                 const std::string nxt = argv[i + 1];
-                if (!nxt.empty() && nxt[0] != '-') val = argv[++i];
+                if (!nxt.empty() && (nxt[0] != '-' || parses_as_number(nxt))) val = argv[++i];
             }
             out->extra[key] = val;
-        } else if (!a.empty() && a[0] == '-' && !is_known_switch(a)) {
+        } else if (!a.empty() && a[0] == '-' && !is_known_switch(a) && !parses_as_number(a)) {
             std::cerr << "未知开关: " << a << " (用 --help 看用法)\n";
             std::exit(2);
         } else {
