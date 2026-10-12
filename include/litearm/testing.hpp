@@ -180,7 +180,7 @@ public:
     std::map<uint8_t, uint8_t> err_override;
 
     // [2026-09-14] 动力学模型在线导入。
-    // 模型恒 9 刚体 —— 与 self.n (关节数) 无关, 台架 1J 下也是 9。
+    // 模型恒 9 刚体 —— 与 self.n (关节数) 无关 (后者现在是恒为 7 的 arm.n())。
     int model_nbody = 9;
     std::vector<std::vector<double>> model_body;
     std::vector<double> model_jm;

@@ -385,7 +385,6 @@ static const std::set<std::string> kExercised = {
 static const std::set<std::string> kAllowedExtra = {
     "port_string",   // 端口字符串 (只读属性; 上游是 _port)
     "q_tol", "dq_tol", "arrive_frames", "move_timeout",   // 可调旋钮
-    "bench_model_axis",
 };
 
 TEST(coverage_every_public_arm_entry_is_exercised_somewhere) {

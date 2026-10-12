@@ -348,22 +348,6 @@ TEST(cmd_ik_rejects_a_bad_seed_length) {
     CHECK_NOTHROW(off->ik({0.3, 0, 0.4, 0, 0, 0}, std::vector<double>(7, 0.0)));
 }
 
-TEST(cmd_ik_uses_the_model_axis_mapping_on_the_single_axis_bench) {
-    // 台架 1J 上当前反馈只有 1 个值 => 按 BENCH_MODEL_AXIS(=5) 把台架电机的实测值填进
-    // 7 轴种子的对应位, 其余为 0。
-    lt::Offline off("Litearm1.7.0-1J", 1);
-    CHECK_NOTHROW(off->ik({0.3, 0, 0.4, 0, 0, 0}));
-    bool found = false;
-    for (const auto& kv : off.t().tx_snapshot()) {
-        if (kv.first != proto::CMD_GET_IK) continue;
-        const auto seed = proto::unpack_f32s(kv.second.data(), 24, 7);
-        found = true;
-        // 桩的 q 是 0 => 种子全 0; 这条钉的是"能构造出 7 个而不是崩"
-        CHECK_EQ(int(seed.size()), 7);
-    }
-    CHECK(found);
-}
-
 TEST(cmd_ik_raises_ik_error_when_the_firmware_reports_failure) {
     lt::Offline off;
     off.t().ik_ok = 0;   // 应答里那个 ok 字节为 0 = 目标不可达/IK 失败

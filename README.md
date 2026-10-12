@@ -37,9 +37,13 @@ is likewise fully offline.
 
 ```bash
 ./build.sh                 # configure + build + run tests (fully offline)
-source env.sh              # put build/ on PATH (builds on first use)
-./run_example.sh 01_hello
+./run_example.sh 01_hello  # run an example (puts build/ on PATH itself)
 ```
+
+`run_example.sh` sources `env.sh` for you, so there is nothing to `source` by hand. Use
+`source env.sh` only when you want the example and test binaries on your `PATH` to run them
+directly (`"$LITEARM_BIN/01_hello"`); it restores your shell options afterwards, so it never
+leaves `set -e` behind in the terminal.
 
 Manual build:
 
@@ -78,6 +82,7 @@ verified" below):
 ```
 include/litearm/*.hpp              # every public header (including testing.hpp / framing.hpp)
 lib/liblitearm.a                   # or .so (add -DBUILD_SHARED_LIBS=ON)
+bin/litearm-cpp                    # the walk-up check CLI (see "Command line")
 lib/cmake/litearm/litearmConfig.cmake
 lib/cmake/litearm/litearmConfigVersion.cmake
 lib/cmake/litearm/litearmTargets.cmake
@@ -397,9 +402,9 @@ the **first call necessarily reports `hz == 0.0`**, and from the second call onw
 ## Command line
 
 ```bash
-./01_hello                      # equivalent to the CLI's status
-./04_ik_tcp
-./02_movej --go 0.1 0 -0.1 0 0 0 0
+./run_example.sh 01_hello  # equivalent to the CLI's status
+./run_example.sh 04_ik_tcp
+./run_example.sh 02_movej --go 0.1 0 -0.1 0 0 0 0
 ```
 
 The SDK also ships a small CLI (`litearm::main_impl`) for walk-up checks:
@@ -559,7 +564,9 @@ bidirectional comparison:
 - the three exemption tables (`FIRMWARE_ONLY_CMDS`/`FIRMWARE_ONLY_RSPS`/`PREEXISTING_GAPS`)
   still hold;
 - the status frame layout is still `6 + N*21` and the per-joint stride is still 21 B;
-- `LITEARM_BENCH_MODEL_AXIS` in `joint_cfg.h` matches the SDK constant;
+- the bench single-axis (1J) mode is still gone from **both** sides — no
+  `LITEARM_BENCH_MODEL_AXIS` in `joint_cfg.h` (and its anti-reenable guard is still in place),
+  and no `BENCH_MODEL_AXIS` / `bench_model_axis` anywhere in the SDK;
 - `ERR{cmd,0x00}` is still produced **only** by the firmware's `default` branch (the SDK's
   capability detection rests entirely on this);
 - the firmware's self-reported version is not below `MIN_FW`.

@@ -62,6 +62,12 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# CLI (巡检/冒烟) —— 库的薄壳, 零额外依赖, 默认随库构建。
+# ---------------------------------------------------------------------------
+add_executable(litearm-cpp cli/main.cpp)
+target_link_libraries(litearm-cpp PRIVATE litearm)
+
+# ---------------------------------------------------------------------------
 # examples
 # ---------------------------------------------------------------------------
 if(LITEARM_BUILD_EXAMPLES)
@@ -124,6 +130,11 @@ if(LITEARM_BUILD_TESTS)
         #   报告里长得和"全跑过了"一模一样 (实测)。假绿比没测更糟。
         set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
     endforeach()
+
+    # 冒烟: 真跑一遍 CLI 二进制, 确保"文档承诺过的命令"确实能执行 (--help 退出码 0)。
+    # 参数解析与错误路径已在 tests/test_cli.cpp 里对 main_impl 直接断言; 这里守的是
+    # "这个可执行文件编得出来、跑得起来、退出码对"这条从薄壳到命令的最后一公里。
+    add_test(NAME cli_help COMMAND litearm-cpp --help)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -156,6 +167,12 @@ install(TARGETS litearm
 # ⚠ 装的是**整个目录** (`include/litearm`), 不是逐个头文件列的清单 —— 目录形式会自动
 #   跟上新增的头 (本仓头文件加得频繁: clock.hpp / framing.hpp 都是后加的)。
 install(DIRECTORY include/litearm DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# ⚠ CLI 也装到 bin/ —— README 承诺 "The SDK also ships a small CLI", 而只把库装出去、
+#   把 CLI 留在构建树里, 那句 "ships" 就是空头支票 (现场巡检的人手上没有源码 checkout)。
+# ⚠ 刻意**不并进 `litearmTargets` 导出**: 那是给 `find_package` 消费者 `link` 用的,
+#   可执行文件进去没有意义。故单独一条 install, 不带 EXPORT。
+install(TARGETS litearm-cpp RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # --- CMake 包配置 ---
 install(EXPORT litearmTargets

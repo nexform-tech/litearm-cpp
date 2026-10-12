@@ -57,11 +57,6 @@ TEST(params_all_joint_params_aggregates_n_roundtrips) {
     for (int i = 0; i < 7; ++i) CHECK_EQ(all[size_t(i)].idx, i);
 }
 
-TEST(params_all_joint_params_on_the_single_axis_bench) {
-    lt::Offline off("Litearm1.7.0-1J", 1);
-    CHECK_EQ(int(off->params().all_joint_params().size()), 1);
-}
-
 TEST(params_reset_factory_requires_a_disarmed_arm) {
     lt::Offline off;
     off->params().set_joint_param(0, 30.0, 1.0, 20.0);

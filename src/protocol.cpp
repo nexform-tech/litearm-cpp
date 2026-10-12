@@ -247,7 +247,10 @@ std::optional<StatusDecoded> decode_status(const uint8_t* payload, size_t len) {
     out.flags = read_u16le(payload);
     out.seq = read_u16le(payload + 2);
     const size_t n = (len - 4) / 21;
-    if (n != 1 && n != 7) return std::nullopt;
+    // ⚠ 只收 7。曾收 1 (台架单电机 1J 模式), 该模式已弃用 (固件 2026-09-28 移除,
+    //   SDK 同步不再支持) —— 收下它会让"1 个关节"顺着状态帧流进 n(), 而 ik() 的
+    //   种子恒需 7 轴, 那时只能靠兜底映射硬凑; 干脆在入口就拒掉。
+    if (n != 7) return std::nullopt;
     const size_t tail = len - 4 - n * 21;
     if (tail != 0 && tail != 2) return std::nullopt;   // 0 = 旧布局, 2 = joint_fault u16
     out.joint_fault = (tail == 2) ? read_u16le(payload + 4 + n * 21) : 0;
@@ -283,8 +286,20 @@ const std::map<uint8_t, std::string>& firmware_only_rsps() {
     return kEmpty;
 }
 const std::map<uint8_t, std::string>& preexisting_gaps() {
-    static const std::map<uint8_t, std::string> kEmpty;
-    return kEmpty;
+    // 已知缺口 —— **本应同步而未同步** (与 firmware_only_cmds 的"有意不做"不同)。
+    //
+    // `CMD_JOINT_FOLLOW` (0x08): 固件侧早已实现 (usb_cmd.c 的 case, 载荷 16N 字节 =
+    //   q[N]+dq[N]+K[N]+B[N], 前馈由固件算), 而本 SDK 一直没有对应常量与入口 —— 不是
+    //   "有意不暴露", 是**确实还没做**。登记在此是为了让
+    //   `test_protocol_sync` 的两条判据如实反映现状 (缺口存在, 且它没有被伪装成
+    //   "固件单边命令"), 而不是宣布任何最终处置。
+    //
+    // ⚠ 留在这里**不是终点**: 要么补上 SDK 入口, 要么裁决"有意不暴露"并改登记到
+    //   firmware_only_cmds() —— 两条路都得有人拍板, 别让它无声地长住。
+    static const std::map<uint8_t, std::string> kGaps = {
+        {0x08, "CMD_JOINT_FOLLOW"},
+    };
+    return kGaps;
 }
 
 const std::vector<CommandCoverage>& command_coverage() { return kCoverage; }

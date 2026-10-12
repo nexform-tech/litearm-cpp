@@ -127,6 +127,10 @@ TEST(protocol_parse_firmware_version_accepts_the_agreed_shape) {
     CHECK(bench.has_value());
     CHECK_EQ(bench->variant, std::string("1J"));
 
+    // ⚠ **解析层通用, 策略层不通用**: 上面收下 "-1J"、下面收下"无变体", 只说明它们符合
+    //   版本串的**形状**。支不支持是 `connect()` 的事 —— 这两种都会被 FirmwareMismatchError
+    //   拒掉 (见 test_arm_assembly.cpp)。别把这条读成"SDK 还支持 1J"。
+
     // 带空白也要能解析 (固件回显可能带尾随字符)
     CHECK(proto::parse_firmware_version("  Litearm1.8.0-7J  ").has_value());
     // 无 -variant 也算合法 (variant 空)
@@ -200,26 +204,35 @@ TEST(protocol_decode_status_new_layout_with_joint_fault) {
 
 TEST(protocol_decode_status_legacy_layout_without_joint_fault) {
     // 4+21N: 固件 <= 1.4.x。尾部没有 joint_fault, 视为 0。
-    const std::vector<double> q{1.0};
+    // ⚠ N=7 —— decode_status 只收 7 关节 (1 关节是已弃用的台架 1J 模式, 见下一条)。
     std::vector<uint8_t> body;
     const auto h = proto::pack_u16le(0);
     body.insert(body.end(), h.begin(), h.end());
     const auto s = proto::pack_u16le(7);
     body.insert(body.end(), s.begin(), s.end());
-    const auto v = proto::pack_f32s(std::vector<double>{1.0, 0.0, 0.0, 0.0, 0.0});
-    body.insert(body.end(), v.begin(), v.end());
-    body.push_back(0);
-    CHECK_EQ(body.size(), size_t(4 + 21));
+    for (int i = 0; i < 7; ++i) {
+        const auto v = proto::pack_f32s(std::vector<double>{double(i), 0.0, 0.0, 0.0, 0.0});
+        body.insert(body.end(), v.begin(), v.end());
+        body.push_back(0);
+    }
+    CHECK_EQ(body.size(), size_t(4 + 21 * 7));
     const auto d = proto::decode_status(body);
     CHECK(d.has_value());
-    CHECK_EQ(int(d->joints.size()), 1);
+    CHECK_EQ(int(d->joints.size()), 7);
     CHECK_EQ(int(d->seq), 7);
     CHECK_EQ(int(d->joint_fault), 0);
+    CHECK_NEAR(d->joints[3].q, 3.0, 1e-6);   // 逐关节偏移仍是 21B 步长
 }
 
 TEST(protocol_decode_status_rejects_illegal_shapes) {
     CHECK(!proto::decode_status(std::vector<uint8_t>{1, 2}).has_value());   // < 4B
-    // 关节数不是 1 也不是 7
+    // 关节数不是 7。**含 1** —— 1 关节是台架单电机 (1J) 模式, 该模式已弃用:
+    // 曾经 `n == 1` 也被收下, 现在在入口就拒 (状态帧是 n() 的来源, 放它进来会让
+    // ik() 拿 1 个关节去凑 7 轴种子)。
+    std::vector<uint8_t> one_legacy(4 + 21, 0);
+    CHECK(!proto::decode_status(one_legacy).has_value());
+    std::vector<uint8_t> one_new(6 + 21, 0);   // 带 joint_fault 的单关节同样拒
+    CHECK(!proto::decode_status(one_new).has_value());
     std::vector<uint8_t> three(4 + 21 * 3, 0);
     CHECK(!proto::decode_status(three).has_value());
     // 尾部多出 1 个字节 (既不是 0 也不是 2)
@@ -287,14 +300,21 @@ TEST(protocol_command_coverage_matches_the_python_table_exactly) {
     CHECK(seen.count(0x16) == 0);
 }
 
-TEST(protocol_sync_sentinel_tables_are_all_empty) {
-    // 四张表的语义**各不相同** (别混), 而它们**当前都是空的** —— 留空是有意的:
-    // 它们是"当前没有未实现命令 / 没有固件单边命令 / 没有已知缺口"这句话的断言载体。
+TEST(protocol_sync_sentinel_tables_hold_exactly_their_declared_contents) {
+    // 四张表的语义**各不相同** (别混), 且它们**当前的内容是一句话的断言载体** ——
     // 往任何一张里加条目都等于宣布一件事, 加之前先想清楚 (见 protocol.hpp 的说明)。
+    //
+    // ⚠ 判据是**逐条内容**, 不是"非空/空": 原先写的是四条 `.empty()`, 那种写法对
+    //   "多了一条没人注意"没有分辨力 (只要非空就红, 于是有人补个新条目时会把手里这条
+    //   一并改宽)。钉住**具体内容** ⇒ 任何增删都得在这里留下痕迹。
     CHECK(proto::unimplemented_cmds().empty());
     CHECK(proto::firmware_only_cmds().empty());
     CHECK(proto::firmware_only_rsps().empty());
-    CHECK(proto::preexisting_gaps().empty());
+
+    // 已知缺口: CMD_JOINT_FOLLOW (0x08) 固件已实现、SDK 尚无入口。见 src/protocol.cpp。
+    CHECK_EQ(int(proto::preexisting_gaps().size()), 1);
+    CHECK_EQ(int(proto::preexisting_gaps().count(0x08)), 1);
+    CHECK_EQ(proto::preexisting_gaps().at(0x08), std::string("CMD_JOINT_FOLLOW"));
 
     // ⚠ **本仓跑不了固件侧的比对**: 上游 `test_protocol_sync.py` 要解析固件仓的
     //   `hal/usb_cmd.h` 双向对表, 而这里没有固件树。所以**别把这条读成"已经跟固件对过账"**

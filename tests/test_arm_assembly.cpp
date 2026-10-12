@@ -27,10 +27,23 @@ TEST(assembly_connect_handshakes_and_fills_in_the_session_facts) {
     CHECK_EQ(count_cmd(off.t(), proto::CMD_GET_FIRMWARE), 1);
 }
 
-TEST(assembly_connect_works_on_the_single_axis_bench_firmware) {
-    lt::Offline off("Litearm1.7.0-1J", 1);
-    CHECK_EQ(off->n(), 1);
-    CHECK_EQ(off->firmware(), std::string("Litearm1.7.0-1J"));
+TEST(assembly_rejects_the_single_axis_bench_firmware) {
+    // 台架单电机 (1J) 模式已弃用 (固件 2026-09-28 移除) ⇒ SDK 同步不再支持: 变体不是
+    // 7J 的一律在 connect 就拒, 而不是放它连上、再在状态帧与 IK 种子处各自兜底
+    // (那两处兜底也随这次一并删了 —— 入口拒掉, 下游就不用假装能处理)。
+    lt::Unconnected un("Litearm1.7.0-1J", 1);
+    CHECK_THROWS_AS(un.arm->connect(), FirmwareMismatchError);
+    // 失败路径必须关链路, 不留半开的会话
+    CHECK(!un.arm->firmware().size());
+    CHECK_EQ(un.fake->closed, true);
+}
+
+TEST(assembly_rejects_a_firmware_string_without_a_variant) {
+    // 固件的两支 (litearm.h 的 `#if LITEARM_BENCH_1J`) 都带变体后缀 ⇒ "没后缀"不属于
+    // 任何已知形态。**不**默认成 7J: 那是把一个没识别出来的设备当成整臂。
+    lt::Unconnected un("Litearm1.5.0");
+    CHECK_THROWS_AS(un.arm->connect(), FirmwareMismatchError);
+    CHECK_EQ(un.fake->closed, true);
 }
 
 TEST(assembly_rejects_a_legacy_version_string) {
@@ -210,12 +223,6 @@ TEST(assembly_last_reset_reason_reads_the_boot_banner) {
     CHECK_EQ(off->last_reset_reason(), std::string(""));
     // 直接把签名喂进传输的噪声留痕 (真机上它是被当噪声丢掉的字节)
     CHECK_NOTHROW(off->last_reset_reason());
-}
-
-TEST(assembly_bench_model_axis_default_mirrors_the_firmware_header) {
-    lt::Offline off;
-    CHECK_EQ(off->bench_model_axis, proto::BENCH_MODEL_AXIS);
-    CHECK_EQ(off->bench_model_axis, 5);
 }
 
 TEST(assembly_cart_support_is_probed_once_at_connect) {

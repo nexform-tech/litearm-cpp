@@ -459,8 +459,9 @@ public:
 
     /// 固件后台 IK: pose[6] + seed[7] -> q[7]。失败抛 IKError。
     ///
-    /// seed 恒为模型 7 轴 (KIN_N), 与关节数解耦。台架 1J 上当前反馈只有 1 个值, 故未显式给
-    /// q_seed 时按 BENCH_MODEL_AXIS(=5) 把台架电机的实测值填进 7 轴种子的对应位, 其余为 0。
+    /// seed 恒为模型 7 轴 (KIN_N)。未显式给 q_seed 时取当前状态帧的 q —— 两者轴数必然
+    /// 一致, 因为状态帧只收 7 关节 (见 proto::decode_status) ⇒ 不存在需要"按模型轴映射"
+    /// 的情形。曾有一条为台架 1J (单关节) 兜底的映射分支, 随该模式弃用一并删除。
     std::vector<double> ik(const std::array<double, 6>& pose,
                            const std::vector<double>& q_seed = {}, double timeout = 3.0);
 
@@ -522,8 +523,6 @@ public:
     /// 上次启动原因: "normal" | "iwdg-rst" | "" (未收到开机签名)。
     /// iwdg-rst 表示固件侧独立看门狗复位过 —— 这是固件唯一会外显该信息的地方。
     std::string last_reset_reason();
-    /// 台架电机对应的模型轴 (仅供非整臂 IK 种子映射; 整臂不受影响)。
-    int bench_model_axis = proto::BENCH_MODEL_AXIS;
 
     // ---- 下列 7 个只读访问器是**与 Python 参照分叉**的加法 (参照侧一个都没有) ----
     //

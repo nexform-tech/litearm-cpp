@@ -246,7 +246,7 @@ Arm& Arm::connect_impl(const std::optional<std::string>& port) {
         close();
         throw FirmwareMismatchError(
             "固件版本不符合约定: '" + firmware_ + "' —— 应为 " + FIRMWARE_PREFIX +
-            "<主.次.修>-{7J|1J}; 请烧录 >=" + FIRMWARE_PREFIX +
+            "<主.次.修>-7J; 请烧录 >=" + FIRMWARE_PREFIX +
             std::to_string(min_firmware_.major) + "." +
             std::to_string(min_firmware_.minor) + "." +
             std::to_string(min_firmware_.patch));
@@ -258,6 +258,18 @@ Arm& Arm::connect_impl(const std::optional<std::string>& port) {
             std::to_string(min_firmware_.major) + "." +
             std::to_string(min_firmware_.minor) + "." +
             std::to_string(min_firmware_.patch) + " (move_j 受控静止保持语义)");
+    }
+    // 变体门: 只认整臂 7J。台架单电机 (1J) 模式已弃用 (固件 2026-09-28 移除), 本 SDK
+    // 同步不再支持 —— 与其放它连上、再在状态帧/IK 种子这些下游各自兜底, 不如在这里
+    // 一次拒掉并说清原因 (下游为此存在的兜底分支也随这次一并删了)。
+    // ⚠ 空变体同样拒: 固件的两支 (litearm.h 的 `#if LITEARM_BENCH_1J`) 都带变体后缀,
+    //   所以"没后缀"不属于任何已知形态, 当成未知设备而不是默认成 7J。
+    if (ver->variant != "7J") {
+        close();
+        throw FirmwareMismatchError(
+            "固件 " + firmware_ + " 的变体是 '" + ver->variant +
+            "', 不是 '7J' —— 台架单电机 (1J) 模式已不受支持; 请烧录 " + FIRMWARE_PREFIX +
+            "<主.次.修>-7J");
     }
     fw_version_ = *ver;
     // 等待一帧状态定关节数
@@ -1347,16 +1359,16 @@ std::vector<double> Arm::ik(const std::array<double, 6>& pose,
     if (q_seed.empty()) {
         const auto st = get_state().value;
         if (!st) throw TransportError("ik 需要 q_seed, 但当前取不到状态帧");
-        if (st->n() == proto::KIN_N) {
-            seed = st->q();
-        } else {
-            // 台架/非整臂: 关节数 != 模型轴数, 按模型轴映射构造 7 轴种子
-            seed.assign(proto::KIN_N, 0.0);
-            const int ax = bench_model_axis;
-            if (ax >= 0 && ax < proto::KIN_N && st->n() > 0) {
-                seed[size_t(ax)] = st->joints[0].q;
-            }
+        // 关节数**必然**是 KIN_N: 状态帧只收 7 关节 (decode_status 挡住了其余), 而
+        // n() 就是从那帧来的。所以这里只是兜底 —— 真走到 else, 说明上游某处的假设已经
+        // 不成立; 那时宁可报错, 也不要拿一个"猜出来的"种子去解 IK (解出来的 q 看着正常)。
+        // 曾有一条按 BENCH_MODEL_AXIS 填单关节实测值的分支, 随台架 1J 弃用一并删除。
+        if (st->n() != proto::KIN_N) {
+            throw InvalidCommandError("状态帧关节数 " + std::to_string(st->n()) +
+                                      " != 模型轴数 " + std::to_string(proto::KIN_N) +
+                                      ", 无法构造 IK 种子");
         }
+        seed = st->q();
     } else {
         seed = q_seed;
     }
