@@ -74,6 +74,7 @@ cmake --build build -j && cmake --install build
 ```
 include/litearm/*.hpp              # 全部公开头 (含 testing.hpp / framing.hpp)
 lib/liblitearm.a                   # 或 .so (加 -DBUILD_SHARED_LIBS=ON)
+bin/litearm-cpp                    # 巡检 CLI (见「命令行」一节)
 lib/cmake/litearm/litearmConfig.cmake
 lib/cmake/litearm/litearmConfigVersion.cmake
 lib/cmake/litearm/litearmTargets.cmake

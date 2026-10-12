@@ -27,6 +27,45 @@ std::string version_after(const std::string& text, const std::string& key) {
     return text.substr(i, j - i);
 }
 
+/// 剥掉 CMake 的 `#` 行注释 (以及 `#[[ ]]` 块注释)。
+///
+/// ⚠ CMake 的注释符是 `#`, **不是** `//` —— `lt::strip_cxx_comments` 对 CMakeLists 完全
+///   不起作用, 于是注释里写的 `install(TARGETS ...)` 会被当成真代码。这条判据本身就是
+///   "扫 CMakeLists", 不剥注释等于让它对**注释**生效 (假绿)。
+std::string strip_cmake_comments(const std::string& raw) {
+    std::string src;
+    src.reserve(raw.size());
+    for (size_t i = 0; i < raw.size();) {
+        if (raw[i] == '#' && i + 2 < raw.size() && raw[i + 1] == '[' && raw[i + 2] == '[') {
+            const size_t e = raw.find("]]", i + 3);
+            i = (e == std::string::npos) ? raw.size() : e + 2;
+            src.push_back(' ');
+        } else if (raw[i] == '#') {
+            const size_t e = raw.find('\n', i);
+            i = (e == std::string::npos) ? raw.size() : e;
+            src.push_back(' ');
+        } else {
+            src.push_back(raw[i++]);
+        }
+    }
+    return src;
+}
+
+/// 取出 `text` 里从 `head` 开始的那次**配对括号调用**的整段 (含外层括号)。
+/// 找不到 `head` 时返回空串。
+std::string call_after(const std::string& text, const std::string& head) {
+    const size_t at = text.find(head);
+    if (at == std::string::npos) return {};
+    const size_t open = text.find('(', at);
+    if (open == std::string::npos) return {};
+    int depth = 0;
+    for (size_t i = open; i < text.size(); ++i) {
+        if (text[i] == '(') ++depth;
+        else if (text[i] == ')' && --depth == 0) return text.substr(at, i - at + 1);
+    }
+    return {};
+}
+
 }  // namespace
 
 TEST(packaging_version_has_exactly_one_source_of_truth) {
@@ -99,4 +138,38 @@ TEST(packaging_pkgconfig_and_config_carry_the_same_version) {
     CHECK(!pc.empty());
     if (pc.empty()) return;
     CHECK(pc.find("Version: @PROJECT_VERSION@") != std::string::npos);
+}
+
+TEST(packaging_the_cli_really_ships_with_the_installed_files) {
+    // ★ README 写着 "The SDK also ships a small CLI" —— **"ships" 是承诺**: 装出来的
+    //   prefix 里必须真有那个二进制。反面就是本仓最怕的形状 —— 文档说随 SDK 交付, 而
+    //   `cmake --install` 只给了库, CLI 留在构建树里 (现场巡检的人手上没有源码 checkout,
+    //   对他来说这个工具等于不存在)。
+    //
+    // ⚠ 真跑一遍 `cmake --install` 太重 (要配第二个构建目录), 而本仓的打包判据一贯是
+    //   "扫源码对表"。这里扫 CMakeLists 的 install 规则, 并**同时**要求文档如实描述它
+    //   —— 两半都在, 那条承诺才不是空头支票。
+    const std::string cmake = strip_cmake_comments(lt::read_repo_file("CMakeLists.txt"));
+    CHECK(!cmake.empty());
+    if (cmake.empty()) return;
+
+    // ① 目标存在 (否则后面那两条 install 判据对着空气成立)
+    CHECK(cmake.find("add_executable(litearm-cpp cli/main.cpp)") != std::string::npos);
+
+    // ② 它真的被装进 bindir。⚠ 断言整段调用, 不是散着找 "RUNTIME DESTINATION" ——
+    //    库那条 install 里也有同一个词, 散着找会被它顶替成"装好了"(假绿)。
+    const std::string inst = call_after(cmake, "install(TARGETS litearm-cpp");
+    CHECK(!inst.empty());
+    if (inst.empty()) return;
+    CHECK(inst.find("RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}") != std::string::npos);
+    // ⚠ 刻意不导出: 可执行文件对 `find_package` 消费者没有意义。
+    CHECK(inst.find("EXPORT") == std::string::npos);
+
+    // ③ 文档如实列出它 —— 装得到的路径与 README 写的对得上。
+    for (const char* readme : {"README.md", "README.zh-CN.md"}) {
+        const std::string doc = lt::read_repo_file(readme);
+        CHECK(!doc.empty());
+        if (doc.empty()) continue;
+        CHECK(doc.find("bin/litearm-cpp") != std::string::npos);
+    }
 }

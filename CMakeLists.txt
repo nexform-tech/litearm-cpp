@@ -168,6 +168,12 @@ install(TARGETS litearm
 #   跟上新增的头 (本仓头文件加得频繁: clock.hpp / framing.hpp 都是后加的)。
 install(DIRECTORY include/litearm DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+# ⚠ CLI 也装到 bin/ —— README 承诺 "The SDK also ships a small CLI", 而只把库装出去、
+#   把 CLI 留在构建树里, 那句 "ships" 就是空头支票 (现场巡检的人手上没有源码 checkout)。
+# ⚠ 刻意**不并进 `litearmTargets` 导出**: 那是给 `find_package` 消费者 `link` 用的,
+#   可执行文件进去没有意义。故单独一条 install, 不带 EXPORT。
+install(TARGETS litearm-cpp RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # --- CMake 包配置 ---
 install(EXPORT litearmTargets
         FILE litearmTargets.cmake

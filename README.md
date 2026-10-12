@@ -82,6 +82,7 @@ verified" below):
 ```
 include/litearm/*.hpp              # every public header (including testing.hpp / framing.hpp)
 lib/liblitearm.a                   # or .so (add -DBUILD_SHARED_LIBS=ON)
+bin/litearm-cpp                    # the walk-up check CLI (see "Command line")
 lib/cmake/litearm/litearmConfig.cmake
 lib/cmake/litearm/litearmConfigVersion.cmake
 lib/cmake/litearm/litearmTargets.cmake
