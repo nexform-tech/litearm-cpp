@@ -6,7 +6,6 @@ Seven runnable programs that exercise the SDK against a real arm; read this befo
 
 ```bash
 cd ..
-source env.sh
 ./run_example.sh 01_hello
 ./run_example.sh 02_movej --go
 ```

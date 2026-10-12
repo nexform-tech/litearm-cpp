@@ -37,9 +37,13 @@ is likewise fully offline.
 
 ```bash
 ./build.sh                 # configure + build + run tests (fully offline)
-source env.sh              # put build/ on PATH (builds on first use)
-./run_example.sh 01_hello
+./run_example.sh 01_hello  # run an example (puts build/ on PATH itself)
 ```
+
+`run_example.sh` sources `env.sh` for you, so there is nothing to `source` by hand. Use
+`source env.sh` only when you want the example and test binaries on your `PATH` to run them
+directly (`"$LITEARM_BIN/01_hello"`); it restores your shell options afterwards, so it never
+leaves `set -e` behind in the terminal.
 
 Manual build:
 
@@ -397,9 +401,9 @@ the **first call necessarily reports `hz == 0.0`**, and from the second call onw
 ## Command line
 
 ```bash
-./01_hello                      # equivalent to the CLI's status
-./04_ik_tcp
-./02_movej --go 0.1 0 -0.1 0 0 0 0
+./run_example.sh 01_hello  # equivalent to the CLI's status
+./run_example.sh 04_ik_tcp
+./run_example.sh 02_movej --go 0.1 0 -0.1 0 0 0 0
 ```
 
 The SDK also ships a small CLI (`litearm::main_impl`) for walk-up checks:

@@ -31,9 +31,12 @@ LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中�
 
 ```bash
 ./build.sh                 # 配置 + 构建 + 跑测试 (全离线)
-source env.sh              # 把 build/ 放进 PATH (首次会自动构建)
-./run_example.sh 01_hello
+./run_example.sh 01_hello  # 运行样例 (脚本自己会把 build/ 加进 PATH)
 ```
+
+`run_example.sh` 会替你 `source env.sh`, 所以不用手动 source。只有当你想把样例/测试
+二进制放进 `PATH` 直接跑 (`"$LITEARM_BIN/01_hello"`) 时才需要 `source env.sh`;
+它结束后会还原你的 shell 选项, 不会把 `set -e` 留在终端里。
 
 手工构建:
 
@@ -379,9 +382,9 @@ arm.move_timeout = 15.0;    // 动作等待窗口 (秒) —— ⚠ 改它要配 
 ## 命令行
 
 ```bash
-./01_hello                      # 等价于 CLI 的 status
-./04_ik_tcp
-./02_movej --go 0.1 0 -0.1 0 0 0 0
+./run_example.sh 01_hello  # 等价于 CLI 的 status
+./run_example.sh 04_ik_tcp
+./run_example.sh 02_movej --go 0.1 0 -0.1 0 0 0 0
 ```
 
 SDK 里也带一个简易 CLI (`litearm::main_impl`), 便于巡检:
@@ -471,7 +474,6 @@ C++ 里这一条的落法比 Python 更需要说清楚 —— 子进程里 `clos
 样例**默认只读**; 任何会动的都要 `--go`:
 
 ```bash
-source env.sh
 ./run_example.sh 01_hello
 ./run_example.sh 02_movej --go
 ```
