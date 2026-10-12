@@ -61,12 +61,14 @@ CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no final XOR), covering [SOF.
 ```
 
 Uplink status frames at 100 Hz (two layouts; the trailing `joint_fault u16` is new as of firmware
-1.5.0):
+1.5.0). `N` is always 7 — the single-axis bench (1J) mode was removed in firmware 2026-09-28 and
+this SDK no longer supports it (`decode_status` rejects any other joint count, and `connect()`
+refuses a firmware whose version variant is not `7J`):
 
-| Layout | Firmware | Length (7J / 1J) |
+| Layout | Firmware | Length (7J) |
 | --- | --- | --- |
-| `4 + 21N` | ≤ 1.4.x | 151 / 25 |
-| `6 + 21N` | ≥ 1.5.0 | 153 / 27 |
+| `4 + 21N` | ≤ 1.4.x | 151 |
+| `6 + 21N` | ≥ 1.5.0 | 153 |
 
 One joint is 21 B = `q f32 + dq f32 + tau f32 + t_mos f32 + t_coil f32 + err u8`.
 Bit allocation in `flags`: **bit0..5 = safety flags**, **bit6..8 = mode**, **bit9 = enabled**,

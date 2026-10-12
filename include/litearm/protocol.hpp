@@ -152,8 +152,10 @@ inline constexpr uint32_t FF_ALL = 0x01FF;
 
 // 固件 IK 的 seed 恒为模型 7 轴 (KIN_N), 与 LITEARM_NUM_JOINTS 解耦。
 inline constexpr int KIN_N = 7;
-// 台架电机对应的整臂模型轴 (joint_cfg.h 的 LITEARM_BENCH_MODEL_AXIS, 台架=5)。
-inline constexpr int BENCH_MODEL_AXIS = 5;
+// ⚠ 这里**曾**有一个 `BENCH_MODEL_AXIS = 5` (台架电机对应的整臂模型轴), 与
+//   joint_cfg.h 的 `LITEARM_BENCH_MODEL_AXIS` 对齐。台架单电机 (1J) 模式已弃用
+//   (固件 2026-09-28 移除), 本 SDK 随之不再支持该模式 ⇒ 常量与它的消费点一并删除,
+//   而不是留着变成"没人再核对"的死常量。见 arm.hpp `connect()` 对 `-1J` 的拒绝。
 
 inline constexpr int MODE_ZERO_G = 7;
 // flags bit9 = 使能位 (固件 1.5.0 起; 低 6 位才是安全 flag, 6..8 是 mode)
@@ -231,7 +233,7 @@ struct FirmwareVersion {
     int major = 0;
     int minor = 0;
     int patch = 0;
-    std::string variant;   // "7J" / "1J" / ...
+    std::string variant;   // 只有 "7J"; "1J" (台架单电机) 已弃用, connect() 会拒
     bool operator<(const FirmwareVersion& o) const {
         if (major != o.major) return major < o.major;
         if (minor != o.minor) return minor < o.minor;
@@ -271,7 +273,10 @@ struct StatusDecoded {
 /// 状态帧 -> StatusDecoded; 非法返回 nullopt。
 /// 兼容两种布局 (尾部 u16 joint_fault 为固件 1.5.0 起新增):
 ///   4+21N  固件 <=1.4.x (无 joint_fault, 视为 0)
-///   6+21N  固件 >=1.5.0 (7J=153B / 1J=27B)
+///   6+21N  固件 >=1.5.0 (7J=153B)
+/// ⚠ **N 只收 7**: 1 关节是台架单电机 (1J) 模式, 该模式已弃用 —— 收下它等于让一个
+///   本 SDK 已不支持的模式悄悄流进来 (状态帧是 `n()` 的来源, 放了它 `ik()` 就会拿
+///   1 个关节去填 7 轴种子)。见 arm.hpp 对 `-1J` 固件的拒绝。
 std::optional<StatusDecoded> decode_status(const uint8_t* payload, size_t len);
 inline std::optional<StatusDecoded> decode_status(const std::vector<uint8_t>& p) {
     return decode_status(p.data(), p.size());
@@ -308,12 +313,14 @@ inline bool is_echoed(uint8_t c) { return c == RSP_ACK || c == RSP_ERR; }
 //     ("不做", 不是"还没做")。往这里加条目等于宣布"SDK 有意不做这条命令"。
 //   * `preexisting_gaps()` —— **已知缺口** (本应同步而未同步), 与"有意不做"不同。
 //
-// 四张表**当前都是空的**。留空是**有意的**: 它们现在是"当前没有未实现命令 / 没有固件单边
-// 命令 / 没有已知缺口"这句话的**断言载体**, 而不是可以顺手塞东西的地方。
+// 三张表 (`unimplemented_cmds` / `firmware_only_cmds` / `firmware_only_rsps`)
+// **当前都是空的**, 而 `preexisting_gaps()` **有一条** (见 src/protocol.cpp 的说明)。
+// 留空是**有意的**: 它们现在是"当前没有未实现命令 / 没有固件单边命令"这句话的**断言载体**,
+// 而不是可以顺手塞东西的地方 —— 所以那条唯一的缺口是一件事**实**, 不是顺手塞的。
 //
 // ⚠ **本仓跑不了那个比对**: `test_protocol_sync.py` 要读固件仓 (`LITEARM_FW_DIR`) 的
 //   `hal/usb_cmd.h`, 而 C++ 仓里没有固件树。故这里保留的是**表本身与它们的语义**
-//   (由 `tests/test_protocol.cpp` 断言为空), 固件侧那一半需要把固件仓放到旁边才能跑。
+//   (由 `tests/test_protocol.cpp` 断言其当前内容), 固件侧那一半需要把固件仓放到旁边才能跑。
 //   别把"表是空的"读成"已经跟固件对过账"。
 const std::map<uint8_t, std::string>& unimplemented_cmds();
 const std::map<uint8_t, std::string>& firmware_only_cmds();

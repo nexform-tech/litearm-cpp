@@ -144,20 +144,8 @@ std::map<std::string, int> sdk_defines(const std::string& prefix) {
     return out;
 }
 
-/// 取出 `static void <name>(void) { ... }` 的函数体 (把解析限定在单个函数内)。
-/// C 源码里用花括号配对来收尾, 比正则的非贪婪更稳。
-std::string fn_body(const std::string& src, const std::string& name) {
-    const std::string key = "static void " + name + "(void)";
-    size_t p = src.find(key);
-    if (p == std::string::npos) {
-        // 容忍 `static void\n<name>(void)`
-        const std::regex re("static[ \\t]+void[ \\t]+" + name + "[ \\t]*\\([ \\t]*void[ \\t]*\\)");
-        std::smatch m;
-        if (!std::regex_search(src, m, re)) return {};
-        p = size_t(m.position());
-    }
-    const size_t brace = src.find('{', p);
-    if (brace == std::string::npos) return {};
+/// 从 `brace` (指向 `{`) 起按花括号配对取出体 (不含最外层花括号)。
+std::string braced_body(const std::string& src, size_t brace) {
     int depth = 1;
     size_t i = brace + 1;
     while (i < src.size() && depth > 0) {
@@ -166,6 +154,35 @@ std::string fn_body(const std::string& src, const std::string& name) {
         ++i;
     }
     return src.substr(brace + 1, i > brace + 1 ? i - brace - 2 : 0);
+}
+
+/// 取出 `static void <name>(void) { ... }` 的**函数体** (把解析限定在单个函数内)。
+/// C 源码里用花括号配对来收尾, 比正则的非贪婪更稳。
+///
+/// ⚠⚠ **必须跳过前向声明**。固件在文件头集中放了一批 `static void f(void);` 声明, 而
+///   `find` 取的是**第一次**出现 —— 从声明处往下找第一个 `{`, 拿到的是**后面第一个有
+///   函数体的函数**, 于是判据对着**别人的函数体**跑。实测 (2026-10-12):
+///   `usb_cmd_report_status` 的两条状态帧判据因此取到了 `f32_finite` 的函数体, 报
+///   "找不到 payload 声明" / "找不到逐关节打包循环" —— 而固件那两行好端端在 1343/1344
+///   行, **状态帧根本没漂移**。这条红长得像"固件改了布局", 极易被误读成真问题
+///   (本次就差点按"同步状态帧"去改 SDK 的解码器)。
+///   ⇒ 判据是 `key` 之后 (跳过空白) 必须**紧跟 `{`**: 只有**定义**满足, `... (void);` 不满足。
+std::string fn_body(const std::string& src, const std::string& name) {
+    const std::string key = "static void " + name + "(void)";
+    for (size_t p = src.find(key); p != std::string::npos; p = src.find(key, p + 1)) {
+        size_t q = p + key.size();
+        while (q < src.size() && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n' ||
+                                  src[q] == '\r')) {
+            ++q;
+        }
+        if (q < src.size() && src[q] == '{') return braced_body(src, q);   // 定义
+    }
+    // 容忍 `static void\n<name>(void) {` (static 与名字之间换行) —— 同样要求紧跟 `{`。
+    const std::regex re("static[ \\t]+void[ \\t]+" + name +
+                        "[ \\t]*\\([ \\t]*void[ \\t]*\\)[ \\t]*\\{");
+    std::smatch m;
+    if (!std::regex_search(src, m, re)) return {};
+    return braced_body(src, size_t(m.position()) + size_t(m.length()) - 1);
 }
 
 std::string collapse_spaces(const std::string& s) {
@@ -437,30 +454,80 @@ TEST(sync_status_frame_joint_stride_matches_sdk_constant) {
     CHECK_EQ(n_floats * 4 + n_u8, 21);
 }
 
-// ---------------------------------------------------------------- 4. 台架常量
+// ---------------------------------------------------------------- 4. 台架 (1J) 支持已撤
 
-TEST(sync_bench_model_axis_matches_sdk_constant) {
+// 这一节原本比对"SDK 的 `BENCH_MODEL_AXIS` == joint_cfg.h 的 `LITEARM_BENCH_MODEL_AXIS`"。
+// 台架单电机 (1J) 模式已弃用: 固件 2026-09-28 移除, SDK 随后**也**撤了 —— 常量、
+// `Arm::bench_model_axis`、`ik()` 的种子映射分支、`decode_status` 的 `n == 1`、
+// `connect()` 对 `-1J` 的放行, 一处不留。
+//
+// ⇒ 判据随之**反转**: 不再是"两边相等", 而是"两边都没有"。这比原来那条更值得钉 ——
+//   一个被删了一半的特性 (比如 SDK 常量删了、`ik()` 的兜底分支还在) 不会有任何测试报红,
+//   除非有人明确断言"它整个不存在"。
+//
+// ⚠ **拆成两条, 不是一条**: SDK 那半条不需要固件树。若与固件那半条写在同一个 TEST 里,
+//   固件树缺失时末尾的 `fw_read()` 会抛 SKIP, 而 `run_all` 捕获 SKIP 后**直接 continue**
+//   —— 前半条已经记下的 FAIL 会被**一并丢掉** (本文件第 6 节的实测记录)。拆开就各归各的:
+//   SDK 那条永不 SKIP。
+
+TEST(sync_the_bench_single_axis_mode_is_gone_from_the_sdk) {
+    // ---- 常量: 不许再声明 ----
+    // ⚠ 判据是**源码文本**: 常量已不存在, 引用它连编译都过不去, 所以只能用扫描。
+    //   **先剥注释** —— protocol.hpp 里留了一段"这里曾有一个 BENCH_MODEL_AXIS"的说明,
+    //   不剥注释这条会**自己把自己判红**。(假绿的反面是假红, 同样得防。)
+    const std::string proto_hpp =
+        lt::strip_cxx_comments(lt::read_repo_file("include/litearm/protocol.hpp"));
+    if (proto_hpp.find("BENCH_MODEL_AXIS") != std::string::npos) {
+        FAIL("protocol.hpp 又声明了 BENCH_MODEL_AXIS —— 台架 1J 模式已弃用 "
+             "(固件 2026-09-28 移除), 这个常量不该回来");
+        return;
+    }
+
+    // ---- 配置项与种子映射分支: 同样不许回来 ----
+    const std::string arm_hpp =
+        lt::strip_cxx_comments(lt::read_repo_file("include/litearm/arm.hpp"));
+    if (arm_hpp.find("bench_model_axis") != std::string::npos) {
+        FAIL("arm.hpp 又出现了 bench_model_axis 配置项");
+        return;
+    }
+    const std::string arm_cpp = lt::strip_cxx_comments(lt::read_repo_file("src/arm.cpp"));
+    if (arm_cpp.find("bench_model_axis") != std::string::npos) {
+        FAIL("arm.cpp 又出现了 bench_model_axis —— ik() 的台架种子映射分支不该回来");
+        return;
+    }
+}
+
+TEST(sync_the_bench_single_axis_mode_is_gone_from_the_firmware) {
     const std::string src = fw_read(kJointCfgH);
-    const std::regex re("#if\\s+LITEARM_BENCH_1J([\\s\\S]*?)#else");
-    std::smatch m;
-    if (!std::regex_search(src, m, re)) {
-        FAIL("joint_cfg.h 结构变了 (找不到 #if LITEARM_BENCH_1J ... #else)");
+
+    if (src.find("LITEARM_BENCH_MODEL_AXIS") != std::string::npos) {
+        FAIL("joint_cfg.h 又定义了 LITEARM_BENCH_MODEL_AXIS —— 固件侧的台架模式复活了, "
+             "SDK 这边撤掉的支持需要重新评估");
         return;
     }
-    const std::regex ax("#define[ \\t]+LITEARM_BENCH_MODEL_AXIS[ \\t]+(\\d+)");
-    std::smatch am;
-    const std::string bench_branch = m[1].str();   // 命名成 lvalue: 临时对象绑不上
-    if (!std::regex_search(bench_branch, am, ax)) {
-        FAIL("找不到台架分支的 LITEARM_BENCH_MODEL_AXIS");
+
+    // 宏没了还不够: 固件必须留着**防重新打开**的守卫。没有守卫, 说明它是被人**悄悄
+    // 删掉**的, 而不是按 2026-09-28 的决议移除的 —— 两者后果不同。
+    //
+    // ⚠⚠ **判据必须先剥注释**。joint_cfg.h 的注释里就写着 `LITEARM_BENCH_1J`
+    //   (解释它为什么不与 litearm.h 冲突) —— 不剥注释, 这条在"守卫被删掉、只剩注释"时
+    //   **照样绿**。实测踩过 (2026-10-12)。
+    //
+    // ⚠⚠ **而且这里绝不能用 `CHECK` + `SKIP`**: 框架的 SKIP 是**异常** (`SkipTest`),
+    //   `run_all` 捕获它之后**直接 `continue`** —— 之前 `CHECK` 记下的失败**不会被报
+    //   出来** (实测: 把守卫整段删掉, 本条依然打印"SKIP"、计 0 失败)。⇒ 用 `FAIL` + `return`。
+    const std::string code = lt::strip_cxx_comments(src);
+    if (code.find("#if defined(LITEARM_BENCH_1J)") == std::string::npos ||
+        code.find("#error") == std::string::npos) {
+        FAIL("joint_cfg.h 少了防重开的守卫 (`#if defined(LITEARM_BENCH_1J)` + `#error`) —— "
+             "这个模式像是被悄悄删掉的, 而不是按 2026-09-28 的决议移除的");
         return;
     }
-    const int fw_axis = std::stoi(am[1].str());
-    CHECK_EQ(fw_axis, proto::BENCH_MODEL_AXIS);
-    if (fw_axis != proto::BENCH_MODEL_AXIS) {
-        // 不一致 => 台架上的 IK 种子会填错轴。
-        FAIL("固件台架模型轴 = " + std::to_string(fw_axis) + ", SDK BENCH_MODEL_AXIS = " +
-             std::to_string(proto::BENCH_MODEL_AXIS) + " —— IK 种子会填错轴");
-    }
+
+    // ⚠ 固件的 `litearm.h` 里**仍留着** `Litearm1.10.0-1J` 那个分支 (死代码, 保留是为了
+    //   不动上游 CMake 数支数的逻辑)。这不与 SDK 的撤离冲突: 该分支的 `#if
+    //   LITEARM_BENCH_1J` 恒为假 ⇒ 实机只报 `-7J`; 万一有人重新打开它, 设备会报 `-1J`,
+    //   而 `Arm::connect()` 现在会直接以 FirmwareMismatchError 拒掉 —— 正是想要的结果。
 }
 
 // ---------------------------------------------------------------- 5. 能力判定假设

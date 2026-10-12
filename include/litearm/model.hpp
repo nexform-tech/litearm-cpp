@@ -27,8 +27,8 @@ namespace litearm {
 class Arm;
 
 /// 模型刚体数 —— 与固件 dyn_model_data.h 的 DYN_MODEL_NBODY 同值。
-/// 与 arm.n() (关节数, 台架 1J 时为 1) 无关: 模型恒 9 刚体 (0=base, 1..7=关节,
-/// 8=ee 固定体)。照抄 joint param 用 arm.n() 做上界会让台架完全无法验证模型。
+/// 与 arm.n() (关节数) 无关: 模型恒 9 刚体 (0=base, 1..7=关节, 8=ee 固定体)。
+/// 别拿 arm.n() 当上界 —— "设备的关节数"和"模型的刚体数"是两个不同的量。
 inline constexpr int MODEL_NBODY = 9;
 
 /// 单 body 的字段数: m, cmx, cmy, cmz, ixx, ixy, ixz, iyy, iyz, izz

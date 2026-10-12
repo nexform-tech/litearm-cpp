@@ -518,7 +518,8 @@ LITEARM_FW_DIR=/path/to/litearm-stm32 ctest --test-dir build -R test_protocol_sy
 - 固件每条已实现命令在 `COMMAND_COVERAGE` 里都有登记, 且**没有过期登记**;
 - 三张豁免表 (`FIRMWARE_ONLY_CMDS`/`FIRMWARE_ONLY_RSPS`/`PREEXISTING_GAPS`) 仍然成立;
 - 状态帧布局仍是 `6 + N*21`、每关节步长仍是 21B;
-- `joint_cfg.h` 的 `LITEARM_BENCH_MODEL_AXIS` 与 SDK 常量一致;
+- 台架单电机 (1J) 模式在**两侧都**仍不存在 —— `joint_cfg.h` 里没有 `LITEARM_BENCH_MODEL_AXIS`
+  (防重开的守卫仍在), SDK 里也没有 `BENCH_MODEL_AXIS` / `bench_model_axis`;
 - `ERR{cmd,0x00}` 仍**只**由固件的 `default` 分支产生 (SDK 的能力判定全押在这条上);
 - 固件自报版本不低于 `MIN_FW`。
 

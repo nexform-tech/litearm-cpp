@@ -564,7 +564,9 @@ bidirectional comparison:
 - the three exemption tables (`FIRMWARE_ONLY_CMDS`/`FIRMWARE_ONLY_RSPS`/`PREEXISTING_GAPS`)
   still hold;
 - the status frame layout is still `6 + N*21` and the per-joint stride is still 21 B;
-- `LITEARM_BENCH_MODEL_AXIS` in `joint_cfg.h` matches the SDK constant;
+- the bench single-axis (1J) mode is still gone from **both** sides — no
+  `LITEARM_BENCH_MODEL_AXIS` in `joint_cfg.h` (and its anti-reenable guard is still in place),
+  and no `BENCH_MODEL_AXIS` / `bench_model_axis` anywhere in the SDK;
 - `ERR{cmd,0x00}` is still produced **only** by the firmware's `default` branch (the SDK's
   capability detection rests entirely on this);
 - the firmware's self-reported version is not below `MIN_FW`.
