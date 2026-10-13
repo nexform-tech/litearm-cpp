@@ -73,12 +73,19 @@ std::vector<std::string> split_lines(const std::string& s) {
     std::string cur;
     for (char c : s) {
         if (c == '\n') {
+            // 吃掉落行符前的 CR: 固件树若是 CRLF 检出 (Windows 上 git archive, 或
+            // 无 autocrlf 的克隆), 行尾会带 CR —— 而 ECMAScript 的 `.` 不匹配 CR,
+            // 下面 fw_defines 的 `(.*)$` 吸不掉它 -> 整行匹配失败 -> CMD_/RSP_ 一条
+            // 都解析不出 -> 下游判据全报成「漂移」(实测: CRLF 树 6/12 FAIL, 提示误导)。
+            if (!cur.empty() && cur.back() == '\r') cur.pop_back();
             out.push_back(cur);
             cur.clear();
         } else {
             cur.push_back(c);
         }
     }
+    // 末尾那行也可能带 CR (文件不以换行结尾时走不到循环内的分支)。
+    if (!cur.empty() && cur.back() == '\r') cur.pop_back();
     out.push_back(cur);
     return out;
 }
@@ -587,4 +594,17 @@ TEST(sync_firmware_version_not_below_sdk_minimum) {
         }
     }
     if (!bad.empty()) FAIL("固件自报版本不满足 SDK 最低要求:" + bad);
+}
+
+TEST(protocol_sync_split_lines_tolerates_crlf) {
+    // 固件树若是 CRLF 检出 (Windows 上 git archive / 无 autocrlf 的克隆), 行尾会带 CR;
+    // 而 ECMAScript 的 `.` **不匹配 CR**, 于是 fw_defines 的 `(.*)$` 吸不掉它 —— 整行
+    // 匹配失败 => CMD_/RSP_ 一条都解析不出 => 下游判据全报成「漂移」。实测(修之前):
+    // 同一棵 CRLF 固件树 6/12 FAIL, 而且打出 48 条"SDK 声明了固件没有的命令" —— 全是
+    // 解析器空转的假象。本用例钉住 split_lines 必须把 CR 吃掉。
+    const std::vector<std::string> ls = split_lines("a\r\nb\r\nc");
+    CHECK_EQ(ls.size(), size_t(3));
+    CHECK_EQ(ls[0], std::string("a"));
+    CHECK_EQ(ls[1], std::string("b"));
+    CHECK_EQ(ls[2], std::string("c"));
 }
