@@ -239,6 +239,41 @@ TEST(cmd_move_js_arity_and_payload) {
     }
 }
 
+TEST(cmd_joint_follow_arity_and_payload_layout) {
+    lt::Offline off;
+    // 四个数组取值各不相同, 这样载荷里哪一段是谁才被真正测到: 固件按 q / dq / kp / kd 的
+    // 顺序读, 错一位就是把刚度当成了目标位置 —— 而两者都是浮点数, 固件不会报错。
+    const std::vector<double> q(7, 0.1);
+    const std::vector<double> dq(7, 0.2);
+    const std::vector<double> kp(7, 30.0);
+    const std::vector<double> kd(7, 1.5);
+    CHECK_NOTHROW(off->joint_follow(q, dq, kp, kd));
+
+    for (int missing = 0; missing < 4; ++missing) {
+        std::vector<double> args[4] = {q, dq, kp, kd};
+        args[missing] = std::vector<double>(6, 0.0);
+        CHECK_THROWS_AS(off->joint_follow(args[0], args[1], args[2], args[3]),
+                        InvalidCommandError);
+    }
+
+    bool seen = false;
+    for (const auto& kv : off.t().tx_snapshot()) {
+        if (kv.first != proto::CMD_JOINT_FOLLOW) continue;
+        seen = true;
+        // q[N] + dq[N] + kp[N] + kd[N] = 16N 字节. **不带 tau**: 前馈由固件算。
+        CHECK_EQ(kv.second.size(), size_t(16 * 7));
+        const auto values = proto::unpack_f32s(kv.second.data(), 0, 28);
+        CHECK_EQ(int(values.size()), 28);
+        for (std::size_t i = 0; i < 7; ++i) {
+            CHECK_NEAR(values[i], 0.1, 1e-6);
+            CHECK_NEAR(values[7 + i], 0.2, 1e-6);
+            CHECK_NEAR(values[14 + i], 30.0, 1e-6);
+            CHECK_NEAR(values[21 + i], 1.5, 1e-6);
+        }
+    }
+    CHECK(seen);
+}
+
 TEST(cmd_send_mit_validates_index_and_payload_size) {
     lt::Offline off;
     CHECK_NOTHROW(off->send_mit(0, 0.1, 0.0, 30.0, 1.0, 0.0));

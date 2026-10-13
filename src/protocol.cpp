@@ -18,12 +18,12 @@ const char* const kFlagNames[] = {"FAULT", "WD_TRIPPED", "FB_STALE",
 // 命令覆盖契约 —— 与 Python 侧 _protocol.COMMAND_COVERAGE 逐条一致。
 const std::vector<CommandCoverage> kCoverage = {
     {0x01, "Arm.movej"},
-    {0x07, "Arm.movej_sync"},
-    {0x02, "Arm.move_p"},
+    {0x07, "Arm.movej_sync"},    {0x02, "Arm.move_p"},
     {0x03, "Arm.move_js"},
     {0x04, "Arm.send_mit"},
     {0x05, "Arm.send_mit_all"},
     {0x06, "Arm.zero_g"},
+    {0x08, "Arm.joint_follow"},
     {0x10, "Arm.enable"},
     {0x11, "Arm.disable"},
     {0x12, "Arm.emergency_stop"},
@@ -288,17 +288,13 @@ const std::map<uint8_t, std::string>& firmware_only_rsps() {
 const std::map<uint8_t, std::string>& preexisting_gaps() {
     // 已知缺口 —— **本应同步而未同步** (与 firmware_only_cmds 的"有意不做"不同)。
     //
-    // `CMD_JOINT_FOLLOW` (0x08): 固件侧早已实现 (usb_cmd.c 的 case, 载荷 16N 字节 =
-    //   q[N]+dq[N]+K[N]+B[N], 前馈由固件算), 而本 SDK 一直没有对应常量与入口 —— 不是
-    //   "有意不暴露", 是**确实还没做**。登记在此是为了让
-    //   `test_protocol_sync` 的两条判据如实反映现状 (缺口存在, 且它没有被伪装成
-    //   "固件单边命令"), 而不是宣布任何最终处置。
+    // **当前为空**, 因为它唯一的一条已经补上: `CMD_JOINT_FOLLOW` (0x08) 的 SDK 入口
+    // 见 `Arm::joint_follow`, 覆盖表里也有了它。登记那张表时的原话是"留在这里不是终点:
+    // 要么补上 SDK 入口, 要么裁决'有意不暴露'", 这里走的是第一条。
     //
-    // ⚠ 留在这里**不是终点**: 要么补上 SDK 入口, 要么裁决"有意不暴露"并改登记到
-    //   firmware_only_cmds() —— 两条路都得有人拍板, 别让它无声地长住。
-    static const std::map<uint8_t, std::string> kGaps = {
-        {0x08, "CMD_JOINT_FOLLOW"},
-    };
+    // ⚠ 别顺手往这里塞东西: 空**是**"当前没有已知缺口"这句话的断言载体, 由
+    //   `tests/test_protocol.cpp` 钉住。真出现新缺口时加条目**等于宣布**它, 加之前先想清楚。
+    static const std::map<uint8_t, std::string> kGaps;
     return kGaps;
 }
 

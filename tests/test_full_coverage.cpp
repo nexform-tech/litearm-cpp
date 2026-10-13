@@ -114,6 +114,8 @@ TEST(coverage_every_implemented_command_is_exercised_through_its_entry) {
     arm.send_mit(0, 0.0, 0.0, 50.0, 2.0, 0.0);                // 0x04
     arm.send_mit_all(zeros7(), zeros7(), std::vector<double>(7, 50.0),
                      std::vector<double>(7, 2.0), zeros7());  // 0x05
+    arm.joint_follow(zeros7(), zeros7(), std::vector<double>(7, 30.0),
+                     std::vector<double>(7, 2.0));            // 0x08
     arm.set_motion_mode(0);                                   // 0x20
     arm.set_speed(50);                                        // 0x21
     arm.ik({0.30, 0.0, 0.35, 0.0, 0.0, 0.0});                // 0x42
@@ -370,6 +372,7 @@ static const std::set<std::string> kExercised = {
     "ff_scalar_items", "ff_scalar_ro_items", "ff_vec_items", "firmware", "fw_version",
     "get_ff_mask", "get_ff_scalar", "get_ff_vec", "get_state", "get_status_now",
     "get_tcp", "home", "host_stats", "ik", "is_connected", "is_in_dfu",
+    "joint_follow",
     "last_reset_reason", "license",
     "log", "model", "msg_hz", "options",
     "move_c", "move_js", "move_l", "move_p", "move_path", "movej", "movej_sync",

@@ -1233,6 +1233,23 @@ void Arm::move_js(const std::vector<double>& q, const std::vector<double>& dq,
     cmd_expect_ack(proto::CMD_MOVE_JS, payload, "move_js");
 }
 
+void Arm::joint_follow(const std::vector<double>& q, const std::vector<double>& dq,
+                       const std::vector<double>& kp, const std::vector<double>& kd) {
+    reject_if_in_dfu();
+    // 四条都排在本 arity 预检里, 顺序与载荷顺序一致 —— 报出来的名字就是缺的那个数组。
+    const std::vector<std::pair<const std::vector<double>*, const char*>> arrs = {
+        {&q, "q"}, {&dq, "dq"}, {&kp, "kp"}, {&kd, "kd"}};
+    for (const auto& kv : arrs) {
+        if (int(kv.first->size()) != n_) {
+            throw InvalidCommandError(std::string("joint_follow ") + kv.second + " 需 N 个");
+        }
+    }
+    std::vector<double> all;
+    all.reserve(size_t(4 * n_));
+    for (const auto& kv : arrs) all.insert(all.end(), kv.first->begin(), kv.first->end());
+    cmd_expect_ack(proto::CMD_JOINT_FOLLOW, proto::pack_f32s(all), "joint_follow");
+}
+
 void Arm::send_mit(int idx, double q, double dq, double kp, double kd, double tau) {
     reject_if_in_dfu();   // 排在 idx 预检之前 (终态下 n_=0 => 否则报"idx 越界")
     if (idx < 0 || idx >= n_) throw InvalidCommandError("idx 越界");
