@@ -237,6 +237,9 @@ public:
     // 覆盖 GET_TCP 回读的位置/朝向 (模拟固件的 rpy 规范化 —— 含万向锁强制 yaw=0)
     std::optional<std::vector<double>> pos_override;
     std::optional<std::vector<double>> rpy_override;
+    /// 非空时**主动状态帧**里的 dq 用它 —— 原实现恒传空 vector, 于是桩里臂
+    /// "永远不在动", "还在动就续期"这类判据在离线用例里根本走不到。
+    std::optional<std::vector<double>> dq_override;
     /// 非空时 `0x43` 原样回这段载荷 (而不是打包 6 个 f32) —— 用于造"帧长不足"那条分支。
     /// ⚠ 用**桩的确定注入点**, 不要在用例里手工 push_frame: 那样造出来的帧会与读线程抢
     /// 时序 (它可能先被读进队列, 再由 `drain_for` 清掉), 用例变成偶发红。

@@ -302,7 +302,7 @@ void FakeTransport::write_frame(uint8_t cmd, const uint8_t* payload, size_t len)
         auto_status = true;
         push(make_status(q, {}, 0, status_flags(enabled), 0, 0, n));
     } else if (cmd == proto::CMD_GET_STATUS) {
-        push(make_status(q, {}, 1, status_flags(enabled), 0, 0, n));
+        push(make_status(q, dq_override.value_or(std::vector<double>{}), 1, status_flags(enabled), 0, 0, n));
     } else if (cmd == proto::CMD_SET_FF_VEC) {     // 存下来供 0x2B 读回
         if (!p.empty()) ff_vec[int(p[0])] = proto::unpack_f32s(p.data(), 1, n);
         push(proto::pack_frame(proto::RSP_ACK, std::vector<uint8_t>{cmd}));
@@ -766,7 +766,7 @@ std::optional<proto::Frame> FakeTransport::read_frame(double timeout_in) {
         const double now = now_s();
         if (now - auto_status_last_ < auto_status_period) return std::nullopt;
         auto_status_last_ = now;
-        fr = proto::unpack_frame(make_status(q, {}, 1, status_flags(enabled), 0, 0, n));
+        fr = proto::unpack_frame(make_status(q, dq_override.value_or(std::vector<double>{}), 1, status_flags(enabled), 0, 0, n));
     }
     return stamp_status(fr);
 }

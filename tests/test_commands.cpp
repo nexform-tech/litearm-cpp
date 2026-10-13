@@ -429,3 +429,47 @@ TEST(cmd_submodules_are_lazily_created_and_stable) {
     CHECK(&off->log() == &off->log());
     CHECK(&off->diag() == &off->diag());
 }
+
+TEST(cmd_arrive_keeps_waiting_while_the_arm_is_still_moving) {
+    // [S2] move_timeout 是"**无进展**预算", 不是墙钟预算: 臂还在按有意义的速率动
+    // (max|dq| >= dq_tol, 与到位判据同一把尺子) 就不该判超时。旧实现在这里报
+    // "未到位, 超时 0.2s" —— 把**正常推进中**的动作报成失败。真机实测: 从 J4=-3.06
+    // 回零要走 175°, 报超时时 J4 的 dq 还有 0.21 rad/s (臂在正常走)。
+    lt::Offline off;
+    off->move_timeout = 0.2;
+    // 桩会随命令更新 q (home 让它归零 => 立刻就"到位"), 所以用旋钮把到位判据
+    // **关掉**: q_tol=0 时 |q-tgt| >= 0 恒真 => done() 永不满足 => 桩"到不了"。
+    off->q_tol = 0.0;
+    off->dq_tol = 0.05;
+    off.t().dq_override = std::vector<double>(7, 0.5);   // 7 轴都在动 (> dq_tol)
+    const uint64_t seq0 = off->status_seq();
+    try {
+        off->home(-1.0);
+        FAIL("应当抛 MotionTimeoutError");
+    } catch (const MotionTimeoutError& e) {
+        const std::string m = e.what();
+        CHECK(m.find("仍在运动") != std::string::npos);   // [S1] 说清是哪一种超时
+        CHECK(m.find("没等够") != std::string::npos);     // 并给出下一步
+    }
+    // 续期确实发生: 等待远超一个 budget (0.2s @~1kHz ≈ 200 帧), 但被硬上限 4× 兜住
+    const uint64_t used = off->status_seq() - seq0;
+    CHECK(used > 300);
+    CHECK(used < 4000);
+}
+
+TEST(cmd_arrive_still_reports_a_real_stall_as_a_timeout) {
+    // 另一半: **停住了却没到位**必须仍是"未到位, 超时" —— 别把判据放松成
+    // "永远报还在动", 那会把真卡死也瞒过去。
+    lt::Offline off;
+    off->move_timeout = 0.2;
+    off->q_tol = 0.0;   // 到位判据永不满足; dq 不覆写 => 桩报空 dq => 判"已静止"
+    try {
+        off->home(-1.0);
+        FAIL("应当抛 MotionTimeoutError");
+    } catch (const MotionTimeoutError& e) {
+        const std::string m = e.what();
+        CHECK(m.find("未到位, 超时") != std::string::npos);
+        CHECK(m.find("已静止") != std::string::npos);
+        CHECK(m.find("仍在运动") == std::string::npos);
+    }
+}

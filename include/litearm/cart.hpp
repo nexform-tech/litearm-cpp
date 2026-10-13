@@ -159,7 +159,9 @@ struct CartPlan {
 /// CANCELED 单独成型是刻意的: 接管是正常用法, 混进"规划失败"会让调用方走故障恢复。
 /// 反过来 CartesianPlanError 的三档都是"这条轨迹本身不成立, 臂一步没动"。
 /// 未登记的 err 值也归到 CartesianPlanError (ok=0 就是"规划没成"), 但消息里带上原始码。
-void raise_for_plan(const CartPlan& plan);
+/// `arm` 可选: 传了就用于在 err=CART_ERR_LIMIT 时**本地推断**最紧的轴 (0x4E 载荷里
+/// 没有轴号), 并把"下一步做什么"写进异常消息; 传 nullptr 时消息与从前逐字节相同。
+void raise_for_plan(const CartPlan& plan, Arm* arm = nullptr);
 
 /// 一条在途笛卡尔请求的票据 (SDK 自造, 固件不知道它的存在)。
 struct CartToken {
