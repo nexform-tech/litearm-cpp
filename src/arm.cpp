@@ -935,6 +935,13 @@ std::string Arm::zero_g_error_text() {
 // 到位等待 / 关节运动
 // ===========================================================================
 
+/// arrive() 的**硬上限倍率**: 无进展预算之外的兜底。
+///
+/// 为什么必须有: 无进展判据靠"还在动就续期"。若臂被外力顶住、或停在原地抖,
+/// 不加兜底就会**永不返回**。取 budget 的倍数而不是绝对秒数 —— 想要更长的总窗,
+/// 该做的是调大 budget, 而不是指望这条兜底变长。
+static constexpr double kArriveHardCapFactor = 4.0;
+
 RobotState Arm::arrive(const std::vector<double>& target, double timeout) {
     Ack& a = require();
     const std::vector<double> tgt = target;
@@ -950,9 +957,35 @@ RobotState Arm::arrive(const std::vector<double>& target, double timeout) {
         }
         return true;
     };
+    // 下面两个只服务报错文案。max_q_err 尺寸不符时返回 -1 = "取不到", 由调用方兜。
+    auto max_q_err = [&](const RobotState& st) {
+        if (int(st.joints.size()) != int(tgt.size())) return -1.0;
+        const auto qs = st.q();
+        double m = 0.0;
+        for (size_t i = 0; i < tgt.size(); ++i) {
+            const double d = std::fabs(qs[i] - tgt[i]);
+            if (d > m) m = d;
+        }
+        return m;
+    };
+    auto max_abs_dq = [](const RobotState& st) {
+        double m = 0.0;
+        for (double d : st.dq()) {
+            const double ad = std::fabs(d);
+            if (ad > m) m = ad;
+        }
+        return m;
+    };
     int n_ok = 0;   // 连续到位拍数 (防到位瞬间误判/抖动)
     uint64_t seq0 = a.status_seq_now();
-    const double end = clock().now_s() + budget;
+    const double t0 = clock().now_s();
+    // ★ [S2] 预算是"**无进展**预算", 不是墙钟预算: 只要臂还在按有意义的速率动
+    //   (max|dq| >= dq_tol —— 与到位判据**同一把尺子**), 就把 deadline 往后推。
+    //   旧实现在大行程上会把**正常推进中**的动作判成 "未到位, 超时 15s": 实测从
+    //   J4=-3.06 回零 (要走 175°) 就是这样 —— 报"超时"时 J4 的 dq 还是 0.21 rad/s,
+    //   臂在正常走。把成功报成失败, 比慢一点更糟。
+    double end = t0 + budget;
+    const double hard_end = t0 + kArriveHardCapFactor * budget;
     Ack::MuLock lk(a.mu, a.dbg_mu_owner);
     a.dbg_check("arrive");
     while (true) {
@@ -966,12 +999,29 @@ RobotState Arm::arrive(const std::vector<double>& target, double timeout) {
             }
             n_ok = done(*a.state) ? n_ok + 1 : 0;
             if (n_ok >= arrive_frames) return *a.state;
+            if (max_abs_dq(*a.state) >= dq_tol) end = clock().now_s() + budget;  // [S2] 续期
         }
-        const double left = end - clock().now_s();
+        const double now = clock().now_s();
+        if (now >= hard_end) break;
+        const double left = end - now;
         if (left <= 0.0) break;
         a.cv.wait_for(lk.ul(), std::chrono::duration<double>(left));
     }
-    throw MotionTimeoutError("未到位, 超时 " + fnum(budget) + "s");
+    // ★ [S1] 报错前先看最后一帧: "**仍在运动**而没等到" 与 "**停住了**却没到位" 是
+    //   两件事, 旧实现一律报 "未到位, 超时 Ns", 现场于是把大行程的正常动作当失败。
+    const double elapsed = clock().now_s() - t0;
+    const double last_dq = a.state ? max_abs_dq(*a.state) : 0.0;
+    if (a.state && last_dq >= dq_tol) {
+        std::string tail;
+        const double e = max_q_err(*a.state);
+        if (e >= 0.0) tail = ", 距目标还差 " + fnum(e) + " rad";
+        throw MotionTimeoutError("未到位: 等到 " + fnum(elapsed) + "s 时臂**仍在运动** (max|dq|=" +
+                                 fnum(last_dq) + " rad/s" + tail +
+                                 ") —— 不是失败, 是没等够; 调大 move_timeout, 或给 "
+                                 "home()/arrive() 传更长的 timeout");
+    }
+    throw MotionTimeoutError("未到位, 超时 " + fnum(budget) + "s (已静止: max|dq|=" +
+                             fnum(last_dq) + " rad/s)");
 }
 
 // ===========================================================================
@@ -1442,7 +1492,7 @@ std::optional<CartPlan> Arm::poll_cart() {
     const auto tok = cart_->claim_resolved();
     if (!tok || !tok->reply) return std::nullopt;
     CartPlan plan = CartPlan::from_reply(*tok->reply);
-    raise_for_plan(plan);
+    raise_for_plan(plan, this);
     return plan;
 }
 
@@ -1537,6 +1587,21 @@ void print_state(const Msg<std::optional<RobotState>>& m) {
     }
     std::cout << " hz=" << fnum(m.hz) << " age=" << fnum(now_s() - m.timestamp, 2)
               << "s\n";
+    // 固件 G7 断轴位图 (1.5.0 起上报; 旧布局恒 0)。**必须显式打**: 0x06 那句报错
+    // ("锁存, 须先 RESET -- EMERGENCY 或 joint_fault 非 0") 叫用户去查 joint_fault,
+    // 而本行原先只打 flags 与每关节 err -- 那是**另一个**字段, 现场看不出是哪个轴被断。
+    char jf[8];
+    std::snprintf(jf, sizeof(jf), "%04X", unsigned(st.joint_fault));
+    std::cout << "joint_fault=0x" << jf;
+    const std::vector<int> bad = st.fault_axes();
+    if (!bad.empty()) {
+        std::cout << " 断轴=";
+        for (size_t i = 0; i < bad.size(); ++i) {
+            if (i) std::cout << ",";
+            std::cout << "J" << (bad[i] + 1);
+        }
+    }
+    std::cout << "\n";
     for (size_t i = 0; i < st.joints.size(); ++i) {
         const auto& j = st.joints[i];
         char buf[256];

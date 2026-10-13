@@ -547,3 +547,35 @@ TEST(cart_error_code_constants_match_the_firmware_enum) {
     CHECK_EQ(CART_ERR_BADARG, 6);
     CHECK_EQ(CartPlan::ERR_REPLY_LOST, -1);
 }
+
+TEST(cart_err_limit_names_the_tightest_axis_and_points_at_the_fix) {
+    // 固件 0x4E 载荷只有 8B, **不带轴号** => "是哪个轴越限"只能 SDK 侧拿
+    // "最近一帧状态里的 q + 软限位"本地推。本用例钉住: 这条报错必须点出**最紧的轴**
+    // 并给出下一步 —— 否则现场只看到"插值越关节限位"而不知所指。
+    lt::Offline off;
+    off.t().cart_err_override = CART_ERR_LIMIT;
+    // 先把状态缓存灌上 (实现只读本地缓存, 不在错误路径上发帧)
+    off->get_state(true);
+    // 期望值由**夹具自己的状态**独立推出, 不抄实现
+    const auto st = off->get_state(false).value;
+    CHECK(st.has_value());
+    const auto jps = off->params().all_joint_params();
+    CHECK_EQ(jps.size(), st->joints.size());
+    size_t tightest = 0;
+    double best = 1e30;
+    for (size_t i = 0; i < jps.size(); ++i) {
+        const double lo = st->joints[i].q - jps[i].q_min;
+        const double hi = jps[i].q_max - st->joints[i].q;
+        const double m = (lo < hi) ? lo : hi;
+        if (m < best) { best = m; tightest = i; }
+    }
+    try {
+        off->move_l(kP2, 0.5);
+        FAIL("CART_ERR_LIMIT 应当抛 CartesianPlanError");
+    } catch (const CartesianPlanError& e) {
+        const std::string m = e.what();
+        CHECK(m.find("越关节限位") != std::string::npos);   // 原有信息仍在
+        CHECK(m.find("J" + std::to_string(tightest + 1)) != std::string::npos);
+        CHECK(m.find("工作位形") != std::string::npos);
+    }
+}

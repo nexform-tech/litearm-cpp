@@ -39,7 +39,54 @@ CartPlan CartPlan::from_reply(const std::vector<uint8_t>& payload) {
     return p;
 }
 
-void raise_for_plan(const CartPlan& plan) {
+namespace {
+
+/// err==CART_ERR_LIMIT 时补一句"是哪个轴、差多少、下一步做什么"。
+///
+/// 为什么只能本地推: 固件 0x4E 的载荷是 8B (ok/err/n_wp/plan_us), **不带轴号** ——
+/// "路点或段中插值越关节限位"这句话本身不指向任何一根轴, 现场只能靠猜。
+///
+/// best-effort 三条底线:
+///   ① 只读**本地缓存** (`get_state(false)` = 最近一帧被动状态帧, 不发帧) —— 错误路径上
+///      绝不再加链路动作;
+///   ② 任何一步取不到就返回空串, 消息退化成原样;
+///   ③ 整个函数**不抛** —— 错误路径上再冒一个异常, 才是真把原始错误盖掉。
+std::string tight_axis_hint(Arm* arm) {
+    if (arm == nullptr) return {};
+    try {
+        const auto st = arm->get_state(false).value;
+        if (!st) return {};
+        const auto jps = arm->params().all_joint_params();
+        if (jps.empty() || jps.size() != st->joints.size()) return {};
+
+        size_t tight = 0;
+        double best = -1.0;
+        for (size_t i = 0; i < jps.size(); ++i) {
+            const double lo = st->joints[i].q - jps[i].q_min;
+            const double hi = jps[i].q_max - st->joints[i].q;
+            const double m = (lo < hi) ? lo : hi;
+            if (best < 0.0 || m < best) {
+                best = m;
+                tight = i;
+            }
+        }
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+                      " [轴号不在 0x4E 载荷里, 本地按最近一帧状态推断: 最紧的是 J%zu, "
+                      "距软限位仅 %.1f mrad (q=%+.4f, 限位 %+.4f..%+.4f)。规划器按软限位"
+                      "零容差硬判 => 先 movej 到关节空间中部的\"工作位形\"再发笛卡尔 "
+                      "(例 [0,-0.5,0,-1.0,0,0,0])]",
+                      tight + 1, best * 1000.0, st->joints[tight].q,
+                      jps[tight].q_min, jps[tight].q_max);
+        return buf;
+    } catch (...) {
+        return {};
+    }
+}
+
+}  // namespace
+
+void raise_for_plan(const CartPlan& plan, Arm* arm) {
     if (plan.ok) return;
     const int err = plan.err;
     if (err == CART_ERR_IK) {
@@ -62,8 +109,10 @@ void raise_for_plan(const CartPlan& plan) {
         case CART_ERR_LIMIT: detail = "路点或段中插值越关节限位"; break;
         default: detail = "未登记的 err=" + std::to_string(err); break;
     }
+    std::string hint;
+    if (err == CART_ERR_LIMIT) hint = tight_axis_hint(arm);
     throw CartesianPlanError("固件笛卡尔规划失败: " + detail + " (err=" +
-                             std::to_string(err) + ")");
+                             std::to_string(err) + ")" + hint);
 }
 
 // ===========================================================================
@@ -549,7 +598,7 @@ struct CartImpl {
         }
         const auto reply = arm->cart_->wait(tok, arm->move_timeout);
         CartPlan plan = CartPlan::from_reply(reply);
-        raise_for_plan(plan);
+        raise_for_plan(plan, arm);
         if (wait) {
             const SettleInfo info = wait_settled(arm, label, seq0);
             plan.started_busy = info.started_busy;
