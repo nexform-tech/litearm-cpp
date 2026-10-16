@@ -34,6 +34,14 @@ inline constexpr uint8_t CMD_ZERO_G = 0x06;
 // [SYNC] 同步 PTP movej: 全关节同时到达, 末端沿关节空间直线 q(s) = q0 + s*dq。
 // 载荷与 CMD_MOVE_J 逐字节相同; 语义差异只在轨迹形状。
 inline constexpr uint8_t CMD_MOVE_J_SYNC = 0x07;
+// [JOINT_FOLLOW] 从臂跟随: PD + 固件侧前馈的关节阻抗通路。
+// 载荷 q[N] + dq[N] + K[N] + B[N] = 16N 字节, **不带 tau** —— 前馈 (重力 + 关节限位墙)
+// 由固件每拍算。q 仍被钳进关节限位, K/B 钳到 MIT_KP_MAX / MIT_KD_MAX。
+//
+// ⚠ 与 move_js / move_mit_all 的关键差别: 本命令进入一个**会话** (固件侧 s_jf_ff), 会话
+// 期间安全包络的超速与位置规则被豁免, 所以**上位机是唯一的界**。会话由任何其它运动或停止
+// 命令退出, hold 期间也退出, 且主机静默过久会让豁免失效。
+inline constexpr uint8_t CMD_JOINT_FOLLOW = 0x08;
 inline constexpr uint8_t CMD_ENABLE = 0x10;
 inline constexpr uint8_t CMD_DISABLE = 0x11;
 inline constexpr uint8_t CMD_EMERGENCY_STOP = 0x12;

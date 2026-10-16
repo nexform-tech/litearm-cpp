@@ -286,6 +286,17 @@ public:
     /// 单发 move_js。连续伺服需调用方按 >=10Hz 重发, 否则 0.1s 看门狗 fail-soft。
     void move_js(const std::vector<double>& q, const std::vector<double>& dq = {},
                  const std::vector<double>& tau_ff = {});
+    /// 从臂跟随 (0x08): PD + 固件侧前馈的关节阻抗。连续伺服需调用方按 >=10Hz 重发。
+    ///
+    /// 逐轴给刚度 `kp` 与阻尼 `kd`; 载荷不带 tau —— 重力与关节限位墙的前馈由固件每拍算。
+    /// `q` 仍被固件钳进关节限位, `kp`/`kd` 钳到固件侧的 MIT_KP_MAX / MIT_KD_MAX, `dq` 是
+    /// **速度参考** (有符号) 而不是 move_js 里的斜坡上限。
+    ///
+    /// ⚠ 本命令进入一个**会话**, 会话期间安全包络的超速与位置规则被豁免 —— **上位机是
+    ///   唯一的界**。任何其它运动或停止命令退出会话, hold 期间也退出, 且主机静默过久会
+    ///   让豁免失效。要走"不考虑限速的实时控制"就是这条, 代价也是这条。
+    void joint_follow(const std::vector<double>& q, const std::vector<double>& dq,
+                      const std::vector<double>& kp, const std::vector<double>& kd);
     /// 单关节 MIT 透传 (0x04)。⚠ 绕过规划; 须调用方维持 >=10Hz。
     void send_mit(int idx, double q, double dq, double kp, double kd, double tau);
     /// 全臂单帧透传 (0x05)。⚠ 同上。
