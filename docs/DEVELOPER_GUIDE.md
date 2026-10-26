@@ -323,56 +323,15 @@ the **only** place where the host will see "this is a code I have not seen befor
 
 ## 9. Tests
 
+This repository does not ship a test suite. Build and smoke-test with:
+
 ```bash
-./build.sh                       # build + ctest
-./build.sh --asan                # AddressSanitizer + UBSan
-ctest --test-dir build -R test_cart -V
-./build/tests/... --filter movej # filter by name within one file (each test_*.cpp is a standalone executable)
+./build.sh
+./build/litearm-cpp --help
 ```
 
-| Test | Coverage |
-| --- | --- |
-| `test_protocol` | CRC (standard check value + an independent reference implementation) / frame assembly and parsing / version parsing / boot signature / both status-frame layouts / the coverage contract checked against the table entry by entry |
-| `test_rot` | rpy<->matrix / gimbal lock / SO(3) log and exp / slerp / the direction of the pose error / the three ways of writing a pose |
-| `test_errors` | the hierarchy / the three-level lookup / the whitelist / the `ERR` -> exception type mapping |
-| `test_state` | enabled/cart_busy/faulted/joint dropout/`drop_hold_inferred` |
-| `test_transport` | **a real pty**: byte-by-byte round trip / noise skipping and the noise trace / resync after a bad frame / a half frame surviving across calls / `timeout=0` meaning "give me whatever there is" / a fake header dropped on timeout / endpoint exclusivity / registration released on the failure path |
-| `test_framing` | the framer **unit-tested directly** (no longer only indirectly, through a pty): feed several frames at once and drain them / a half frame across calls / the noise trace and its cap / fake headers timing out / resync after a bad frame / `reset` |
-| `test_register` | format gatekeeping for the unverified register: five columns / every entry has a source / ids are exactly 1..N / no invisible rows missing the leading `\|` |
-| `test_packaging` | the categories you can still guard before shipping: a single source for the version / every sibling header of a public header is in the installed directory / the packaging template is present |
-| `test_arm_assembly` | handshake / version rejection / idempotent connect / retargeting / teardown / the four DFU terminal-state paths |
-| `test_commands` | the enable retry whitelist / safety commands / joint motion and arrival / servo pass-through arity / state reads / IK |
-| `test_ff` | 0x26/0x27/0x28/0x31 + 0x2B/0x2C read-back / the item table |
-| `test_params` | 0x22/0x23/0x24/0x36 + the armed gate |
-| `test_model` | probing / the three levels staging-bank-commit / the mask bit by bit / requires disable |
-| `test_log` | sample layout / cursor continuation / drop retry / the infinite-loop guard when the cursor does not advance / the per-tick recording model |
-| `test_diagnostics` | timing lines (a name joined to a number) / LINK lines (**keys whose names contain digits**) / both frames received / old-firmware compatibility |
-| `test_cart` | `CartPlan` / exception mapping / the three entry points / **FIFO pairing** / **the absorb budget in both directions** / the queue clear / capability probing |
-| `test_zero_g` | the keepalive thread / the guards in both directions / RAII / an interrupted keepalive is visible / close stops the thread |
-| `test_license` | the 26 B record / not activated / read-back qualification of the `0x02` aggregate tier / the enable gate when unlicensed |
-| `test_threading` | concurrent state readers / concurrent Cartesian entry points serialized / close waking the waiters / `Msg.hz` semantics / no drop path on the single write point |
-| `test_precheck` | client-side prechecks (non-finite values / soft limits / speed / tolerances) and the two rules for the soft-limit cache |
-| `test_accessors` | the seven read-only diagnostic accessors (including not throwing in the terminal state, and the forwarding chain through the wrapper layer) |
-| `test_clock` | the injectable time source: the real clock by default / injection is visible / "too old ⇒ link lost" is deterministically verifiable under a fake clock |
-| `test_frame_ownership` | **frame ownership**: the single read point (source scan) / the ownership criterion / two threads not eating each other's replies / stale frames clearing the queue / the queue cap / the guards |
-| `test_full_coverage` | **the dynamic command-coverage sentinel** (every implemented command really was sent out) / no extra ids / the public-member list guard / a full sweep of error types while not connected |
-| `test_protocol_sync` | **a two-way comparison against the firmware headers** — **needs `LITEARM_FW_DIR`, otherwise SKIP** (see the end of §9) |
-| `test_fork_guard` | a real `fork()`: the child sends nothing / teardown does not hang |
-
-**All of it is offline** — using `testing::FakeTransport` (a fake transport whose replies are
-scripted per command). The serial port itself is tested with **a real pty**: a stub ignores
-`timeout` entirely, so defects like "`read_frame(0)` actually touches not a single byte" come out
-all green on a stub (that is exactly how upstream once missed a real-hardware failure).
-
-**The only exception** is `test_protocol_sync`: it reads source from the **firmware repository**
-and **SKIPs** when it cannot find it (`LITEARM_FW_DIR`, default `~/litearm-stm32`). The
-frame-ownership suite holds two more **source-scanning** criteria (the single read point, the
-public member list) — they derive a path from `__FILE__` through `lt::repo_root()`, independent of
-the current working directory (ctest's cwd is the build directory, and a relative path will not
-open there — hit in practice).
-
-**Caution:** **a SKIP is not a pass**: these are counted separately in the report and printed one
-by one. Seeing "N skipped" means that part **was not tested**.
+`litearm::testing::FakeTransport` is still part of the library for your own offline tests.
+References to `tests/...` elsewhere in this document are historical.
 
 ---
 
