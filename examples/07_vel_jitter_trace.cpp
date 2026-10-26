@@ -27,6 +27,7 @@
 //
 // 安全: 默认只读, 加 --go 才动。跑完**刻意不 disable**: 该位形失能会因自重坠回,
 //       保持使能持位才是安全终态。急停在手边。
+//       `--ff-mask` 是 RAM 写，退出时（含异常/提前 return）自动恢复原值，不写 Flash。
 //
 // 运行:
 //   ./07_vel_jitter_trace                          # 只读: 打印计划
@@ -34,6 +35,7 @@
 //   ./07_vel_jitter_trace --go --dist 0.1 --dur 2.5
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -70,6 +72,30 @@ void apply_dir(int dir, std::array<double, 6>* p, double d) {
         default: (*p)[1] -= d; break;
     }
 }
+
+/// 退出（含异常/提前 return）时把 ff_mask 恢复成进入前读到的值。
+/// `--ff-mask` 是 RAM 写；不恢复会让后续会话看到被改过的前馈配置。
+class FfMaskRestore {
+  public:
+    explicit FfMaskRestore(Arm& arm) : arm_(&arm) {}
+    ~FfMaskRestore() {
+        if (!active_) return;
+        try {
+            arm_->set_ff_mask(original_);
+        } catch (...) {
+            // 收尾尽力而为：恢复失败不能掩盖主异常。
+        }
+    }
+    void remember(uint32_t original) {
+        original_ = original;
+        active_ = true;
+    }
+
+  private:
+    Arm* arm_;
+    uint32_t original_ = 0;
+    bool active_ = false;
+};
 
 /// 把 100Hz 状态流的逐帧差异写成 CSV; 返回 (写出的帧数, 丢帧数)。
 std::pair<int, int> dump_status_csv(const std::string& path,
@@ -142,7 +168,10 @@ int main(int argc, char** argv) {
                 std::printf("本机固件没编进 LITEARM_CART_PLAN —— 没有可用的直线入口, 退出\n");
                 return 1;
             }
+            FfMaskRestore mask_restore(arm);
             if (set_ff_mask) {
+                const uint32_t original = static_cast<uint32_t>(arm.get_ff_mask());
+                mask_restore.remember(original);
                 std::printf("\n先写 ff_mask=0x%03X (该分支无武装门控, 使能态可写)\n",
                             ff_mask);
                 arm.set_ff_mask(ff_mask);
@@ -240,8 +269,7 @@ int main(int argc, char** argv) {
                 std::printf("收尾 TCP: %s\n", example::fmt(*final_tcp, 4).c_str());
             }
             if (set_ff_mask) {
-                std::printf("提示: ff_mask 已改成 0x%03X, 需要恢复请写回原值或 reset\n",
-                            ff_mask);
+                std::printf("退出后自动恢复 ff_mask（RAM 写，不是 Flash）\n");
             }
             return 0;
         },
