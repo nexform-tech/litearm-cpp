@@ -40,7 +40,7 @@ Per-example flags (run with `--help`):
 - **Read-only by default.** Without `--go` an example only connects and queries; it sends no motion command at all.
 - **Small steps you can back out of.** Examples that move default to a small step such as 1 cm / 0.1 rad.
 - **They deliberately do not `disable()` when finished** (02/03/06/07). Disabling at those poses lets the arm fall back under its own weight, so staying enabled and holding position is the safe end state. Keep the emergency stop within reach.
-- **Irreversible command.** `05_ff_tune` calls `save_params()`, which **writes flash**. Do not run it casually on a calibrated arm.
+- **RAM only.** `05_ff_tune` writes FF parameters to RAM and never calls `save_params()`; power-cycling restores the flash values. Persisting them to flash is a separate, irreversible action you can run manually.
 
 ## Migrating from the Python examples
 
