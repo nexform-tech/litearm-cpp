@@ -24,13 +24,4 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
-# ⚠ 交叉时必须关测试。本仓的测试**不依赖 gtest**, 所以它们**编得过** —— 问题在**跑**:
-#   ctest 会去执行 aarch64 二进制, 而本机跑不了 ⇒ 一堆 Failed, 且报错形状是
-#   "Exec format error" 这种离"你交叉了"很远的消息。
-#   明确拦下比留一堆跑不了的 target 好 (顶层 CMakeLists 里还有第二道, 见那里)。
-set(LITEARM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-
-# ⚠ FORCE 的副作用: toolchain 文件在命令行 `-D` **之后**处理 ⇒ 显式
-#   `-DLITEARM_BUILD_TESTS=ON` 会被静默覆盖成 OFF。方向是安全的 (宁可少编也不产出
-#   跑不了的 target), 故保留 FORCE —— 但要接交叉跑测试, 请用 CROSSCOMPILING_EMULATOR
-#   (qemu-aarch64) 而不是把这个 FORCE 去掉。
+# 本仓不包含测试套件；交叉构建只产出库 / CLI / examples。

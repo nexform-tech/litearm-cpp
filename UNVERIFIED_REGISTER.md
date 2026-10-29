@@ -10,6 +10,10 @@
 > not registered at all** — nobody can re-check it in the field, so the whole investigation has
 > to be repeated from scratch. The check lives in `tests/test_register.cpp` (five columns,
 > reference shape, ids exactly 1..N — all three are pinned).
+>
+> ⚠ The test suite referenced throughout this register was removed on 2026-10-26. References to
+> `tests/...` below are historical; the register itself is kept as the record of what remains
+> unverified.
 
 ## Format conventions
 

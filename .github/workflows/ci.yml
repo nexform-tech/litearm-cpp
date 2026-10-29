@@ -1,7 +1,8 @@
 name: CI
 
-# Test gate for this repository. It runs on pull requests and on pushes to the
+# Build gate for this repository. It runs on pull requests and on pushes to the
 # default branch; releases live in their own workflow (see .github/workflows/release.yml).
+# The repository has no test suite: CI configures, builds, and smoke-runs the CLI.
 on:
   pull_request:
   push:
@@ -36,5 +37,5 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+      - name: CLI smoke
+        run: ./build/litearm-cpp --help
