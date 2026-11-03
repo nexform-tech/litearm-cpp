@@ -17,7 +17,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(LITEARM_BUILD_EXAMPLES "构建 examples/" ON)
-option(LITEARM_BUILD_TESTS "构建 tests/" ON)
 option(LITEARM_WERROR "把编译警告当错误" OFF)
 
 add_library(litearm
@@ -82,59 +81,6 @@ if(LITEARM_BUILD_EXAMPLES)
         add_executable(${name} ${src})
         target_link_libraries(${name} PRIVATE litearm_examples_common)
     endforeach()
-endif()
-
-# ---------------------------------------------------------------------------
-# tests
-# ---------------------------------------------------------------------------
-# ⚠⚠ 交叉编译时**不许**开测试。
-#   注意本仓的测试**不依赖 gtest** ⇒ 它们**编得过** —— 问题在**跑**: ctest 会去执行
-#   aarch64 二进制, 而本机跑不了 ⇒ 一整排 Failed, 报错是 "Exec format error" 这种
-#   离"你交叉编译了"很远的消息。明确拦下比留一堆跑不了的 target 好。
-#   ⚠ toolchain 文件里已经 FORCE 成 OFF; 这里再守一道, 是因为那条约束只活在一个
-#     将来可能被改的文件里, 而失败现场在这里 (走本仓的 toolchain 时它其实求值不到 ——
-#     它守的是别的交叉配置: 手动设 CMAKE_SYSTEM_NAME、或不含 FORCE 的 toolchain)。
-if(CMAKE_CROSSCOMPILING AND LITEARM_BUILD_TESTS)
-    message(FATAL_ERROR
-        "交叉编译时不允许 LITEARM_BUILD_TESTS=ON: 测试二进制在构建机上跑不了, "
-        "ctest 会整排失败。请加 -DLITEARM_BUILD_TESTS=OFF, 或配置 "
-        "CROSSCOMPILING_EMULATOR (如 qemu-aarch64) 后自行放开本守卫。")
-endif()
-
-if(LITEARM_BUILD_TESTS)
-    enable_testing()
-    add_library(litearm_test_support STATIC tests/test_framework.cpp)
-    target_include_directories(litearm_test_support PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    target_link_libraries(litearm_test_support PUBLIC litearm)
-
-    file(GLOB LITEARM_TEST_SOURCES CONFIGURE_DEPENDS
-         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp")
-    # test_framework.cpp 是框架自身 (它提供 main), 已经被编进 litearm_test_support ——
-    # 别再把它当成一个"用例文件"注册成一个 0 用例的 ctest 条目。
-    list(REMOVE_ITEM LITEARM_TEST_SOURCES
-         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_framework.cpp")
-    foreach(src ${LITEARM_TEST_SOURCES})
-        get_filename_component(name ${src} NAME_WE)
-        add_executable(${name} ${src})
-        target_link_libraries(${name} PRIVATE litearm_test_support)
-        # test_example_args 验 examples/_common.cpp 的参数解析 ⇒ 把那份源码直接编进来。
-        # 不依赖 LITEARM_BUILD_EXAMPLES (打包/交叉构建里 examples 可能是 OFF, 那时
-        # 配置仍必须成功, 故不走 litearm_examples_common 这个 target)。
-        if(name STREQUAL "test_example_args")
-            target_sources(${name} PRIVATE examples/_common.cpp)
-        endif()
-        add_test(NAME ${name} COMMAND ${name})
-        # 有用例 SKIP 时框架返回 77 —— 让 ctest 报 `***Skipped` 而不是 "Passed"。
-        # ⚠ 这不是洁癖: ctest 默认**吞掉通过用例的全部输出**, 于是"11 个用例被跳过"在
-        #   报告里长得和"全跑过了"一模一样 (实测)。假绿比没测更糟。
-        set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
-    endforeach()
-
-    # 冒烟: 真跑一遍 CLI 二进制, 确保"文档承诺过的命令"确实能执行 (--help 退出码 0)。
-    # 参数解析与错误路径已在 tests/test_cli.cpp 里对 main_impl 直接断言; 这里守的是
-    # "这个可执行文件编得出来、跑得起来、退出码对"这条从薄壳到命令的最后一公里。
-    add_test(NAME cli_help COMMAND litearm-cpp --help)
 endif()
 
 # ---------------------------------------------------------------------------

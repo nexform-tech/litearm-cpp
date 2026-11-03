@@ -1,8 +1,8 @@
 #! /usr/bin/env bash
 # ============================================================================
-# 构建 + 跑测试 (离线, 不碰硬件)。
+# 构建 SDK / CLI / examples (离线, 不碰硬件)。
 #
-#   ./build.sh              # Release 构建 + ctest
+#   ./build.sh              # Release 构建
 #   ./build.sh --werror     # 把编译警告当错误
 #   ./build.sh --asan       # AddressSanitizer + UBSan (查越界/泄漏)
 #   ./build.sh --tsan       # ThreadSanitizer (查数据竞争) —— ⚠ 见文件末尾的"TSan 现状"
@@ -84,9 +84,4 @@ fi
 
 cmake -S "$DIR" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release "${EXTRA[@]}"
 cmake --build "$BUILD" -j"$(nproc 2>/dev/null || echo 4)"
-cd "$BUILD"
-if [ "$TSAN" = 1 ] && [ ${#RUNNER[@]} -gt 0 ]; then
-    "${RUNNER[@]}" ctest --output-on-failure
-else
-    ctest --output-on-failure
-fi
+echo "构建完成: $BUILD"

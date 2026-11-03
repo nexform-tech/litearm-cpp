@@ -317,52 +317,15 @@ LiteArmError                     本包所有错误
 
 ## 9. 测试
 
+仓库当前不包含测试套件。构建与冒烟：
+
 ```bash
-./build.sh                       # 构建 + ctest
-./build.sh --asan                # AddressSanitizer + UBSan
-ctest --test-dir build -R test_cart -V
-./build/tests/... --filter movej # 单文件内按名字过滤 (每个 test_*.cpp 是独立可执行文件)
+./build.sh
+./build/litearm-cpp --help
 ```
 
-| 测试 | 覆盖 |
-| --- | --- |
-| `test_protocol` | CRC (标准检查值 + 独立参考实现) / 组帧解帧 / 版本解析 / 开机签名 / 两种状态帧布局 / 覆盖契约逐条对表 |
-| `test_rot` | rpy<->矩阵 / 万向锁 / SO(3) 对数指数 / slerp / 姿态误差方向 / 三种位姿写法 |
-| `test_errors` | 层级关系 / 三级查找 / 白名单 / `ERR` -> 异常的类型映射 |
-| `test_state` | enabled/cart_busy/faulted/断轴/`drop_hold_inferred` |
-| `test_transport` | **真 pty**: 逐字节往返 / 噪声跳过与留痕 / 坏帧重同步 / 半帧跨调用保留 / `timeout=0` 的"有就给我" / 假帧头超时丢弃 / 端点独占 / 失败路径释放登记 |
-| `test_framing` | 分帧器**直接**单测 (不再只能经 pty 间接测): 一次喂多帧取空 / 跨调用半帧 / 噪声留痕与封顶 / 假帧头超时 / 坏帧重同步 / `reset` |
-| `test_register` | 《未验证登记册》的格式守门: 五列 / 每条都有出处 / id 恰好 1..N / 没有丢了行首 `\|` 的隐形行 |
-| `test_packaging` | 卖出去之前能守住的那几类: 版本单一口径 / 公开头的兄弟头都在装出去的目录里 / 打包模板在 |
-| `test_arm_assembly` | 握手 / 版本拒绝 / 幂等 connect / 改靶 / 收尾 / DFU 终态四条路径 |
-| `test_commands` | 使能重试白名单 / 安全命令 / 关节运动与到位 / 伺服透传 arity / 状态读取 / IK |
-| `test_ff` | 0x26/0x27/0x28/0x31 + 0x2B/0x2C 读回 / item 表 |
-| `test_params` | 0x22/0x23/0x24/0x36 + 武装门禁 |
-| `test_model` | 探测 / staging-bank-commit 三层 / 掩码逐位 / 需失能 |
-| `test_log` | 样本布局 / 游标续读 / 掉帧重试 / 游标不前进的死循环保护 / 逐拍记录模型 |
-| `test_diagnostics` | 计时行 (名字与数字相连) / LINK 行 (**名字带数字的键**) / 两帧收齐 / 旧固件兼容 |
-| `test_cart` | `CartPlan` / 异常映射 / 三条入口 / **FIFO 配对** / **吸收额度两个方向** / 清队 / 能力探测 |
-| `test_zero_g` | 保活线程 / 双向守卫 / RAII / 保活中断可见 / close 停线程 |
-| `test_license` | 26B 记录 / 未激活 / `0x02` 聚合档的回读定性 / 未授权时的使能门禁 |
-| `test_threading` | 并发状态读者 / 并发笛卡尔入口串行 / close 唤醒等待者 / `Msg.hz` 语义 / 唯一写口无丢弃路径 |
-| `test_precheck` | 客户端预检 (非有限值 / 软限 / 速度 / 容差) 与软限缓存的两条纪律 |
-| `test_accessors` | 七个只读诊断访问器 (含终态下不抛、以及包装层转发链) |
-| `test_clock` | 可注入时间源: 默认是真钟 / 注入可见 / 假钟下"超龄判失联"确定性可验 |
-| `test_frame_ownership` | **帧归属**: 唯一读口 (源码扫描) / 归属判据 / 两线程互不吃应答 / 陈旧帧清队 / 队列封顶 / 守卫 |
-| `test_full_coverage` | **命令覆盖动态哨兵** (每条已实现命令都真发出去过) / 无多余 id / 公开成员名单守卫 / 未连接时的错误类型全扫 |
-| `test_protocol_sync` | **与固件头文件双向比对** —— **需 `LITEARM_FW_DIR`, 否则 SKIP** (见 §9 末) |
-| `test_fork_guard` | 真 `fork()`: 子进程零下发 / 收尾不挂 |
-
-**全部离线** —— 用 `testing::FakeTransport` (按命令脚本化应答的假传输)。
-串口本身用**真 pty** 测: 桩会把 `timeout` 整个忽略掉, 于是"`read_frame(0)` 其实一个字节
-都不碰"这类缺陷在桩上全绿 (上游就这么漏掉过一次真机故障)。
-
-**唯一的例外**是 `test_protocol_sync`: 它要读**固件仓库**的源码, 找不到时**SKIP**
-(`LITEARM_FW_DIR`, 默认 `~/litearm-stm32`)。帧归属那套里还有两处**源码扫描**判据
-(唯一读口、公开成员名单) —— 它们用 `lt::repo_root()` 从 `__FILE__` 推路径, 与当前工作
-目录无关 (ctest 的 cwd 是构建目录, 相对路径在那边打不开 —— 实测踩过)。
-
-⚠ **SKIP 不是通过**: 报告里单独计数并逐条打印。看到"N 跳过"就说明那部分**没测**。
+`litearm::testing::FakeTransport` 仍随库发布，写自己的离线测试时可以直接用它。本文档
+其他位置引用的 `tests/...` 均为历史引用。
 
 ---
 

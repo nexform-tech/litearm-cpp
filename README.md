@@ -41,7 +41,7 @@ is likewise fully offline.
 ```
 
 `run_example.sh` sources `env.sh` for you, so there is nothing to `source` by hand. Use
-`source env.sh` only when you want the example and test binaries on your `PATH` to run them
+`source env.sh` only when you want the example binaries on your `PATH` to run them
 directly (`"$LITEARM_BIN/01_hello"`); it restores your shell options afterwards, so it never
 leaves `set -e` behind in the terminal.
 
@@ -50,11 +50,9 @@ Manual build:
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build --output-on-failure
 ```
 
-CMake options: `-DLITEARM_BUILD_EXAMPLES=OFF` / `-DLITEARM_BUILD_TESTS=OFF` /
-`-DLITEARM_WERROR=ON`.
+CMake options: `-DLITEARM_BUILD_EXAMPLES=OFF` / `-DLITEARM_WERROR=ON`.
 
 On Linux you need serial port permission:
 
@@ -115,17 +113,18 @@ it with `find_package` and with `pkg-config`:
 
 ```bash
 cmake -S . -B build-inst -DCMAKE_INSTALL_PREFIX=/tmp/litearm-prefix \
-      -DLITEARM_BUILD_TESTS=OFF -DLITEARM_BUILD_EXAMPLES=OFF
+      -DLITEARM_BUILD_EXAMPLES=OFF
 cmake --build build-inst -j && cmake --install build-inst
 # then: cmake consumer with find_package(litearm CONFIG REQUIRED)  -> builds -> runs
 #       pkg-config consumer with g++ main.cpp $(pkg-config --cflags --libs litearm) -> builds -> runs
 ```
 
-`tests/test_packaging.cpp` additionally guards the classes of problem you can catch **before
+The former `tests/test_packaging.cpp` guarded the classes of problem you can catch **before
 shipping**: that the version has exactly one source of truth (CMakeLists ↔ the macros in the
 header ↔ `version()`), that every sibling header referenced by a public header actually lives
 in `include/litearm/`, that both packaging templates are present, and that the `.pc` version is
-not hard-coded.
+not hard-coded. With the test suite removed, re-check these by hand after the install steps
+above.
 
 #### Cross-compiling for aarch64
 
@@ -140,10 +139,8 @@ been attempted, and **even that layer was not verified on this machine** (no
 at "compiler not found". Alignment, endianness and serial behaviour on arm64 are **unguarded**.
 Do not read this section as "arm64 is supported".
 
-⚠ That toolchain file **forces** `LITEARM_BUILD_TESTS=OFF`: this repository's tests do not
-depend on gtest so they *would* compile, but ctest would then execute aarch64 binaries on the
-build machine ⇒ a wall of "Exec format error". To actually **run** tests under
-cross-compilation, configure `CROSSCOMPILING_EMULATOR` (qemu-aarch64).
+⚠ This repository has no test suite, so cross-compiling produces the library, CLI and examples
+only.
 
 ## Quick start
 
@@ -515,22 +512,18 @@ source env.sh
 ./run_example.sh 02_movej --go
 ```
 
-## Tests
+## Verification
+
+This repository does not ship a test suite. Verify a build with:
 
 ```bash
-./build.sh                  # configure + build + ctest (fully offline, never touches hardware)
-ctest --test-dir build -R test_cart -V
+./build.sh
+./build/litearm-cpp --help
 ```
 
-27 test binaries covering protocol/CRC/rotation/error codes/status frames/serial (a real
-pty)/session assembly/the command surface/**frame ownership**/**command coverage**/**firmware
-protocol sync**/feedforward/joint parameters/model/capture/self-test/Cartesian/zero-gravity/
-licensing/concurrency/**fork guard**/CLI.
-
-**No hardware is required** — the tests use a scripted fake transport
-(`litearm::testing::FakeTransport`), and the serial layer itself is tested through a **real
-pty** (not a fake: a fake would ignore `timeout` entirely, so defects like "`read_frame(0)`
-actually touches zero bytes" go green on a fake).
+`litearm::testing::FakeTransport` is still part of the library, so you can write your own
+offline tests against the same transport interface. References to `tests/...` elsewhere in this
+document describe the suite that was removed on 2026-10-26; they are historical.
 
 ### The unverified register
 
@@ -538,46 +531,6 @@ actually touches zero bytes" go green on a fake).
 **unverified / known-imperfect / deliberately diverging from the reference implementation** —
 and **every entry must carry a source reference** (`file:line`), otherwise it does not count
 as registered (nobody can re-check it in the field). Skim it before saying "this was tested".
-
-⚠ That discipline **has machine-enforced criteria** (`tests/test_register.cpp`): the column
-count, the shape of the reference, contiguous ids, and "**an invisible row that lost its
-leading `|`**" (such a row still reads like a registration while the machine cannot see it at
-all). The criteria check **shape only** — they cannot tell whether a reference still points at
-the sentence it meant to. That limitation is itself registered (entry 18).
-
-### Firmware protocol sync (`test_protocol_sync`)
-
-This one **needs the firmware repository** to run, and **SKIPs** by default (not "passes" —
-a false green is worse than no test):
-
-```bash
-LITEARM_FW_DIR=/path/to/litearm-stm32 ctest --test-dir build -R test_protocol_sync -V
-```
-
-It parses the firmware sources directly (**no firmware build required**) and enforces a
-bidirectional comparison:
-
-- every firmware `CMD_*`/`RSP_*` has the **same name and value** in the SDK's `protocol.hpp`
-  (and the reverse — the SDK may not declare a command the firmware lacks);
-- every implemented firmware command has an entry in `COMMAND_COVERAGE`, with **no stale
-  entries**;
-- the three exemption tables (`FIRMWARE_ONLY_CMDS`/`FIRMWARE_ONLY_RSPS`/`PREEXISTING_GAPS`)
-  still hold;
-- the status frame layout is still `6 + N*21` and the per-joint stride is still 21 B;
-- the bench single-axis (1J) mode is still gone from **both** sides — no
-  `LITEARM_BENCH_MODEL_AXIS` in `joint_cfg.h` (and its anti-reenable guard is still in place),
-  and no `BENCH_MODEL_AXIS` / `bench_model_axis` anywhere in the SDK;
-- `ERR{cmd,0x00}` is still produced **only** by the firmware's `default` branch (the SDK's
-  capability detection rests entirely on this);
-- the firmware's self-reported version is not below `MIN_FW`.
-
-**Why it has to exist**: when firmware 1.5.x changed the status frame from `4+21N` to `6+21N`,
-the SDK was not updated, while the fake-based tests replaced the whole transport and
-manufactured the old layout — **fully green offline, guaranteed to fail on real hardware**.
-Manual review does not stop this class of problem.
-
-⚠ **SKIP is listed separately in the report**: if you see `<N> skipped` after a run, the sync
-half **was not tested**. Do not read it as tested.
 
 ## Relationship to the original (litearm-python 2.1.0)
 
@@ -592,7 +545,7 @@ at the language level:
 | Unavailable values | `None` | `std::nullopt` |
 | Zero-gravity context | `with arm.zero_g():` | `{ auto zg = arm.zero_g(); ... }` (RAII) |
 | Teardown | `__del__` backstop | destructor backstop (likewise delegates to `close()` only) |
-| Test framework | pytest | a minimal in-house framework (zero dependencies, one executable per `test_*.cpp`) |
+| Test suite | pytest (upstream) | none in this repository |
 
 ### Four deliberate divergences from the original (since 2026-09-28)
 
@@ -750,6 +703,9 @@ fake clock would be **wrong**, not merely useless.
   see there.)
 
 ### The batch of TSan warnings: **settled — false positives, with runtime evidence**
+
+> Historical: the test suite was removed on 2026-10-26. This section records findings from the
+> former harness; `./build.sh --tsan` no longer exists.
 
 `./build.sh --tsan` reports **large numbers** of data races on `Ack::queues` (dozens from a
 single test case). **The conclusion is false positive**, and the basis is not "the code looks

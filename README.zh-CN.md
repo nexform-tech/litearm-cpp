@@ -30,11 +30,11 @@ LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中�
 | 连接 | USB CDC 串口, VID:PID `1d50:606f` |
 
 ```bash
-./build.sh                 # 配置 + 构建 + 跑测试 (全离线)
+./build.sh                 # 配置 + 构建 (全离线)
 ./run_example.sh 01_hello  # 运行样例 (脚本自己会把 build/ 加进 PATH)
 ```
 
-`run_example.sh` 会替你 `source env.sh`, 所以不用手动 source。只有当你想把样例/测试
+`run_example.sh` 会替你 `source env.sh`, 所以不用手动 source。只有当你想把样例
 二进制放进 `PATH` 直接跑 (`"$LITEARM_BIN/01_hello"`) 时才需要 `source env.sh`;
 它结束后会还原你的 shell 选项, 不会把 `set -e` 留在终端里。
 
@@ -43,11 +43,9 @@ LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中�
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build --output-on-failure
 ```
 
-CMake 开关: `-DLITEARM_BUILD_EXAMPLES=OFF` / `-DLITEARM_BUILD_TESTS=OFF` /
-`-DLITEARM_WERROR=ON`。
+CMake 开关: `-DLITEARM_BUILD_EXAMPLES=OFF` / `-DLITEARM_WERROR=ON`。
 
 Linux 需要串口权限:
 
@@ -106,15 +104,16 @@ g++ my_app.cpp $(pkg-config --cflags --libs litearm)
 
 ```bash
 cmake -S . -B build-inst -DCMAKE_INSTALL_PREFIX=/tmp/litearm-prefix \
-      -DLITEARM_BUILD_TESTS=OFF -DLITEARM_BUILD_EXAMPLES=OFF
+      -DLITEARM_BUILD_EXAMPLES=OFF
 cmake --build build-inst -j && cmake --install build-inst
 # 然后: cmake 消费者 find_package(litearm CONFIG REQUIRED) → 编过 → 跑通
 #       pkg-config 消费者 g++ main.cpp $(pkg-config --cflags --libs litearm) → 编过 → 跑通
 ```
 
-`tests/test_packaging.cpp` 另外守着**卖出去之前**就能发现的那几类:
+原先的 `tests/test_packaging.cpp` 守着**卖出去之前**就能发现的那几类:
 版本只有一个说法 (CMakeLists ↔ 头里的宏 ↔ `version()`)、公开头引用的兄弟头都在
-`include/litearm/` 里、两个打包模板文件在、`.pc` 的版本不是写死的。
+`include/litearm/` 里、两个打包模板文件在、`.pc` 的版本不是写死的。测试套件删除后，
+这些需要在安装步骤之后手工核对。
 
 #### aarch64 交叉编译
 
@@ -127,9 +126,7 @@ cmake --build build-arm64 -j
 (没装 `aarch64-linux-gnu-g++`): 工具链文件被正确解析、干净地失败在"找不到编译器"。
 对齐、端序、串口行为在 arm64 上**无人守**。别把本节读成"已支持 arm64"。
 
-⚠ 那个工具链文件**强制** `LITEARM_BUILD_TESTS=OFF`: 本仓的测试不依赖 gtest 所以**编得过**,
-但 ctest 会在构建机上执行 aarch64 二进制 ⇒ 一整排 "Exec format error"。
-要交叉**跑**测试请配置 `CROSSCOMPILING_EMULATOR` (qemu-aarch64)。
+⚠ 本仓不包含测试套件；交叉构建只产出库、CLI 与 examples。
 
 ## 快速上手
 
@@ -479,54 +476,23 @@ C++ 里这一条的落法比 Python 更需要说清楚 —— 子进程里 `clos
 ./run_example.sh 02_movej --go
 ```
 
-## 测试
+## 验证
+
+仓库当前不包含测试套件。构建与冒烟：
 
 ```bash
-./build.sh                  # 配置 + 构建 + ctest (全离线, 从不碰硬件)
-ctest --test-dir build -R test_cart -V
+./build.sh
+./build/litearm-cpp --help
 ```
 
-21 个测试二进制, 覆盖协议/CRC/旋转/错误码/状态帧/串口(真 pty)/会话装配/命令面/
-**帧归属**/**命令覆盖**/**固件协议同步**/
-前馈/关节参数/模型/采集/自检/笛卡尔/零重力/授权/并发/**fork 守卫**/CLI。
-**不需要任何硬件** —— 测试用一份脚本化的假传输 (`litearm::testing::FakeTransport`),
-而串口本身用**真 pty** 测 (不是桩: 桩会把 `timeout` 整个忽略掉, 于是"`read_frame(0)`
-其实一个字节都不碰"这类缺陷在桩上全绿)。
+`litearm::testing::FakeTransport` 仍随库发布，写自己的离线测试时可以直接用它。本文档
+其他位置引用的 `tests/...` 描述的是 2026-10-26 删除的那套测试，属于历史引用。
 
 ### 未验证登记册
 
 仓库根目录的 `UNVERIFIED_REGISTER.md` 逐条登记「**没验证的 / 已知不完美的 / 有意与参照实现
 分叉的**」—— 每条**必须带出处**（`文件:行号`），否则等于没登记（现场复核不了）。
 报告里说"测过了"之前先扫一眼它。
-
-⚠ 这条纪律**本身有机器判据**（`tests/test_register.cpp`）：列数、出处形状、id 连号、
-以及"**丢了行首 `|` 的隐形行**"（那种行读起来还像一条登记，而机器完全看不见它）。
-判据只查**形状**，查不了出处是否**还指得到那句话** —— 这条限制也登记在册（第 18 条）。
-
-### 与固件的协议同步 (`test_protocol_sync`)
-
-这一套**需要固件仓库**才能跑, 默认 **SKIP**(不是通过 —— 假绿比没测更糟):
-
-```bash
-LITEARM_FW_DIR=/path/to/litearm-stm32 ctest --test-dir build -R test_protocol_sync -V
-```
-
-它直接解析固件源码 (**不需要编译固件**), 双向强制比对:
-
-- 固件每条 `CMD_*`/`RSP_*` 在 SDK `protocol.hpp` 里**同名同值** (反向亦然 —— SDK 不许声明
-  固件没有的命令);
-- 固件每条已实现命令在 `COMMAND_COVERAGE` 里都有登记, 且**没有过期登记**;
-- 三张豁免表 (`FIRMWARE_ONLY_CMDS`/`FIRMWARE_ONLY_RSPS`/`PREEXISTING_GAPS`) 仍然成立;
-- 状态帧布局仍是 `6 + N*21`、每关节步长仍是 21B;
-- 台架单电机 (1J) 模式在**两侧都**仍不存在 —— `joint_cfg.h` 里没有 `LITEARM_BENCH_MODEL_AXIS`
-  (防重开的守卫仍在), SDK 里也没有 `BENCH_MODEL_AXIS` / `bench_model_axis`;
-- `ERR{cmd,0x00}` 仍**只**由固件的 `default` 分支产生 (SDK 的能力判定全押在这条上);
-- 固件自报版本不低于 `MIN_FW`。
-
-**为什么必须有它**: 固件 1.5.x 把状态帧从 `4+21N` 改成 `6+21N` 时漏同步了 SDK, 而桩测试
-整替换 transport、自造旧布局 —— **离线全绿、真机必挂**。人工核对挡不住这类事。
-
-⚠ **SKIP 会在报告里单列**: 跑完若看到 `<N> 跳过`, 说明同步那一半**没测**, 别读成测过了。
 
 ## 与原版 (litearm-python 2.1.0) 的关系
 
@@ -540,7 +506,7 @@ LITEARM_FW_DIR=/path/to/litearm-stm32 ctest --test-dir build -R test_protocol_sy
 | 取不到的值 | `None` | `std::nullopt` |
 | 零重力上下文 | `with arm.zero_g():` | `{ auto zg = arm.zero_g(); ... }` (RAII) |
 | 收尾 | `__del__` 兜底 | 析构兜底 (同样只委托给 `close()`) |
-| 测试框架 | pytest | 自研极简框架 (零依赖, 每个 `test_*.cpp` 一个可执行文件) |
+| 测试套件 | pytest（上游） | 本仓库不包含测试套件 |
 
 ### 本移植**有意**与原版分叉的四组 (2026-09-28 起)
 
@@ -663,6 +629,9 @@ A 侧的结论一致（它的注释也写"凡'超时真的发生'的判据要用
   （登记册第 21 条；要不要给它加一次有界重试是个**未决的取舍** —— 见那里。）
 
 ### TSan 那一批告警: **已定论 —— 误报, 且有运行时证据**
+
+> 历史记录：测试套件已于 2026-10-26 删除；本节记录的是原测试框架的结论，
+> `./build.sh --tsan` 已不存在。
 
 `./build.sh --tsan` 会在 `Ack::queues` 上报**大量** data race (单用例就有几十条)。
 **结论是误报**, 依据不是"看代码觉得像", 而是**运行时证据**:
