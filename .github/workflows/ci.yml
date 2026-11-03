@@ -19,6 +19,7 @@ concurrency:
 jobs:
   # The job must be named `test`: that is the required status check.
   test:
+    name: test
     # CMakeLists.txt requires protobuf >= 3.19; 22.04 ships 3.12.
     runs-on: ubuntu-24.04
     steps:
