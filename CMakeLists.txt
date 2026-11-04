@@ -17,6 +17,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(LITEARM_BUILD_EXAMPLES "构建 examples/" ON)
+option(LITEARM_BUILD_TESTS "构建最小离线测试" ON)
 option(LITEARM_WERROR "把编译警告当错误" OFF)
 
 add_library(litearm
@@ -65,6 +66,16 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(litearm-cpp cli/main.cpp)
 target_link_libraries(litearm-cpp PRIVATE litearm)
+
+# ---------------------------------------------------------------------------
+# 最小离线测试 —— 不接硬件, 覆盖帧编解码、CRC、位姿数学和版本。
+# ---------------------------------------------------------------------------
+if(LITEARM_BUILD_TESTS)
+    enable_testing()
+    add_executable(litearm_tests tests/smoke_test.cpp)
+    target_link_libraries(litearm_tests PRIVATE litearm)
+    add_test(NAME litearm_smoke COMMAND litearm_tests)
+endif()
 
 # ---------------------------------------------------------------------------
 # examples
