@@ -255,15 +255,8 @@ std::optional<StatusDecoded> decode_status(const uint8_t* payload, size_t len) {
     //   种子恒需 7 轴, 那时只能靠兜底映射硬凑; 干脆在入口就拒掉。
     if (n != 7) return std::nullopt;
     const size_t tail = len - 4 - n * 21;
-    // 0 = 旧布局; 2 = joint_fault u16 (>=1.5.0); 2+n+1 = 1.12.2 的原因尾。
-    const size_t tail_reason = 2 + n + 1;
-    if (tail != 0 && tail != 2 && tail != tail_reason) return std::nullopt;
-    out.joint_fault = (tail >= 2) ? read_u16le(payload + 4 + n * 21) : 0;
-    if (tail == tail_reason) {
-        const size_t off = 4 + n * 21 + 2;
-        out.fault_reason.assign(payload + off, payload + off + n);
-        out.drop_hold_reason = payload[off + n];
-    }
+    if (tail != 0 && tail != 2) return std::nullopt;   // 0 = 旧布局, 2 = joint_fault u16
+    out.joint_fault = (tail == 2) ? read_u16le(payload + 4 + n * 21) : 0;
     out.mode = (out.flags >> 6) & 0x7;
     for (int k = 0; k < 6; ++k) {
         if (out.flags & (1u << k)) out.flag_names.push_back(kFlagNames[k]);

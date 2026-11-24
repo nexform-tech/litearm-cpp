@@ -69,7 +69,6 @@ refuses a firmware whose version variant is not `7J`):
 | --- | --- | --- |
 | `4 + 21N` | ≤ 1.4.x | 151 |
 | `6 + 21N` | ≥ 1.5.0 | 153 |
-| `6 + 21N + 8` | **1.12.2 only** | 161 |
 
 One joint is 21 B = `q f32 + dq f32 + tau f32 + t_mos f32 + t_coil f32 + err u8`.
 Bit allocation in `flags`: **bit0..5 = safety flags**, **bit6..8 = mode**, **bit9 = enabled**,
@@ -77,11 +76,9 @@ Bit allocation in `flags`: **bit0..5 = safety flags**, **bit6..8 = mode**, **bit
 bit0..bit5 (see the `for (k = 0; k < 6; ++k)` in `protocol.cpp`; raising that bound would turn
 mode/enabled/cart_busy into "fault bits" as well).
 
-**Caution:** **1.12.3 froze the status frame back at 153 B.** 1.12.2 had appended the per-axis
-reason codes (`fault_reason[N]`) and `drop_hold_reason`; 1.12.3 reverted that and moved the
-details to **flags bit11 + `CMD_GET_FAULT 0x51`**, queried on demand. `decode_status` still
-accepts 161 B (field devices on 1.12.2), but on 1.12.3 `RobotState::fault_reason` is always
-empty — empty does **not** mean "not latched"; the criterion is bit11.
+**Caution:** **1.12.3 freezes the status frame at 153 B.** Fault reasons are not carried in the
+status frame; they are queried on demand via **flags bit11 + `CMD_GET_FAULT 0x51`**. The
+criterion is bit11; the reasons come from `Arm::get_fault_detail()`.
 
 **Caution:** two IDs are dual-purpose: `0x49` (downlink `CMD_KIN_BENCH` / uplink
 `RSP_JOINT_PARAM`) and `0x41` (downlink `CMD_GET_FIRMWARE` / uplink `RSP_DETAIL`, the latter being
@@ -347,8 +344,7 @@ for (auto [axis, reason] : d.fault_reasons())      // only axes with reason != 0
 
 The codes are the **firmware's raw enums**, not text; `fault_reason_text()` /
 `drop_hold_reason_text()` render them (an unregistered code is not silenced — it carries `FF-xx`).
-1.12.2 was an intermediate release: the reasons rode the 161 B status frame and are available via
-`RobotState::fault_reasons()`; from 1.12.3 that field is always empty and 0x51 is the only path.
+1.12.3 provides the reasons only through 0x51; `RobotState` carries no reason fields.
 
 ---
 

@@ -2,9 +2,8 @@
 //
 // 帧: SOF(0xA5) CMD(1B) LEN(1B) PAYLOAD(0..255) CRC16_LO CRC16_HI
 // CRC16-CCITT-FALSE, 覆盖 [SOF..PAYLOAD]。
-// 上行 100Hz 状态帧: 6+21N (固件 >=1.5.0, 尾部 joint_fault u16) / 6+21N+8
-// (仅 1.12.2, 尾部再带 fault_reason[N]+drop_hold_reason) / 4+21N (<=1.4.x,
-// 仅兼容解析); 应答/异步返回穿插。1.12.3 把状态帧冻结回 153B, 故障原因改走 0x51。
+// 上行 100Hz 状态帧: 6+21N (固件 >=1.5.0, 尾部 joint_fault u16; 1.12.3 起冻结在
+// 7J=153B) 或 4+21N (<=1.4.x, 仅兼容解析); 应答/异步返回穿插。新能力只走请求-应答。
 #pragma once
 
 #include <array>
@@ -190,7 +189,7 @@ inline constexpr int FLAG_FAULT_DETAIL_BIT = 11;
 // joint_fault 位图 (u16) 能表达的关节数上限
 inline constexpr int MAX_JOINTS = 16;
 
-// ---- [1.12.2 / error-obs] 故障原因码 (固件 litearm.h) ----
+// ---- [1.12.3 / error-obs] 故障原因码 (固件 litearm.h) ----
 // 固件**只发码, 不发文本**; 文案由 SDK 侧 (errors.hpp 的 fault_reason_text) 解析。
 // 0 = 该轴未锁存。不变量: reason[i] != 0 <=> joint_fault 第 i 位为 1。
 inline constexpr uint8_t FAULT_R_NONE = 0;
@@ -202,7 +201,7 @@ inline constexpr uint8_t FAULT_R_TEMP = 5;         // MOS/线圈过温
 inline constexpr uint8_t FAULT_R_FOLLOW_ERR = 6;   // 跟随误差超限 (|q-q_ref| > following_error)
 inline constexpr uint8_t FAULT_R_NONFINITE = 7;    // 反馈非有限值 (NaN/Inf)
 
-// ---- [1.12.2 / error-obs] 整臂掉线刚性持位 (drop_hold) 的首次原因 ----
+// ---- [1.12.3 / error-obs] 整臂掉线刚性持位 (drop_hold) 的首次原因 ----
 inline constexpr uint8_t DROP_R_NONE = 0;
 inline constexpr uint8_t DROP_R_FB_STALE = 1;      // 该轴 CAN 反馈丢失
 inline constexpr uint8_t DROP_R_MOTOR_ERR = 2;     // 电机自保护失能
@@ -310,22 +309,14 @@ struct StatusDecoded {
     std::vector<const char*> flag_names;
     std::vector<JointRaw> joints;
     uint16_t joint_fault = 0;
-    /// 每轴首次锁存原因 (FAULT_R_*; 0 = 未锁存)。**只有固件 1.12.2 的 161B 帧**
-    /// 携带; 1.12.3 起状态帧回到 153B, 原因改走 CMD_GET_FAULT(0x51)。
-    /// 1.12.3 上恒为空 —— 空**不表示**"未锁存"; 判据是 flags bit11。
-    std::vector<uint8_t> fault_reason;
-    /// 整臂掉线刚性持位的首次原因 (DROP_R_*), 旧固件与 1.12.3 恒 0。
-    uint8_t drop_hold_reason = 0;
 };
 
 /// 状态帧 -> StatusDecoded; 非法返回 nullopt。
-/// 兼容三种布局 (尾部逐版本追加, 旧 SDK 不会静默误读新帧):
-///   4+21N      固件 <=1.4.x (无 joint_fault, 视为 0)
-///   6+21N      固件 >=1.5.0 (尾部 joint_fault u16; 7J=153B)
-///   6+21N+8    固件 1.12.2  (再追加 fault_reason[N] u8 + drop_hold_reason u8;
-///                            7J=161B。1.12.3 已**回退**到 153B, 原因改走 0x51)
-/// ⚠ 1.12.3 的固化策略是"状态帧布局冻结, 新能力走请求-应答" —— 这三个布局之后
-///   不应再有第四个。新增字段请开命令, 不要扩状态帧。
+/// 兼容两种布局 (尾部 u16 joint_fault 为固件 1.5.0 起新增):
+///   4+21N  固件 <=1.4.x (无 joint_fault, 视为 0)
+///   6+21N  固件 >=1.5.0 (7J=153B; 1.12.3 起冻结在这一布局)
+/// ⚠ 1.12.3 的固化策略是"状态帧布局冻结, 新能力走请求-应答" (故障详情走
+///   CMD_GET_FAULT 0x51) —— 不要扩状态帧。
 /// ⚠ **N 只收 7**: 1 关节是台架单电机 (1J) 模式, 该模式已弃用 —— 收下它等于让一个
 ///   本 SDK 已不支持的模式悄悄流进来 (状态帧是 `n()` 的来源, 放了它 `ik()` 就会拿
 ///   1 个关节去填 7 轴种子)。见 arm.hpp 对 `-1J` 固件的拒绝。

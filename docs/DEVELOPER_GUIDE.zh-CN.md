@@ -59,7 +59,6 @@ CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, 无末异或), 覆盖 [SOF..P
 | --- | --- | --- |
 | `4 + 21N` | ≤ 1.4.x | 151 |
 | `6 + 21N` | ≥ 1.5.0 | 153 |
-| `6 + 21N + 8` | **仅 1.12.2** | 161 |
 
 单关节 21B = `q f32 + dq f32 + tau f32 + t_mos f32 + t_coil f32 + err u8`。
 `flags` 的位分配: **bit0..5 = 安全 flag**, **bit6..8 = mode**, **bit9 = enabled**,
@@ -67,10 +66,8 @@ CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, 无末异或), 覆盖 [SOF..P
 bit0..bit5 (见 `protocol.cpp` 里那个 `for (k = 0; k < 6; ++k)`; 把它改大就会让
 mode/enabled/cart_busy 一起变成"故障位")。
 
-⚠ **1.12.3 把状态帧冻结回 153B**: 1.12.2 曾把每轴原因码 (`fault_reason[N]`) 与
-`drop_hold_reason` 追加到帧尾, 1.12.3 回退, 改为 **flags bit11 + `CMD_GET_FAULT 0x51`**
-按需查询。`decode_status` 仍兼容 161B (1.12.2 的现场设备), 但 1.12.3 上
-`RobotState::fault_reason` 恒为空 —— 空**不表示**"未锁存", 判据是 bit11。
+⚠ **1.12.3 的状态帧冻结在 153B**: 故障原因不放进状态帧, 而是用 **flags bit11 +
+`CMD_GET_FAULT 0x51`** 按需查询。判据是 bit11; 原因从 `Arm::get_fault_detail()` 读。
 
 ⚠ **两个双 ID**: `0x49` (下行 `CMD_KIN_BENCH` / 上行 `RSP_JOINT_PARAM`) 与
 `0x41` (下行 `CMD_GET_FIRMWARE` / 上行 `RSP_DETAIL`, 后者是**死登记**)。
@@ -340,8 +337,8 @@ for (auto [axis, reason] : d.fault_reasons())      // 只列 reason != 0 的轴
 | `drop_hold_reason` | 整臂掉线刚性持位原因 (`DROP_R_*`: 0 / 1=CAN 丢失 / 2=电机自保护) |
 
 原因码是**固件原始枚举**, 不含文案; `fault_reason_text()` / `drop_hold_reason_text()`
-负责渲染 (未登记的码不静默, 会带出 `FF-xx`)。1.12.2 是中间版本: 原因塞在 161B 状态帧
-尾部, 可用 `RobotState::fault_reasons()`; 1.12.3 起该字段恒为空, 必须走 0x51。
+负责渲染 (未登记的码不静默, 会带出 `FF-xx`)。1.12.3 只通过 0x51 提供原因,
+`RobotState` 不携带原因字段。
 
 ---
 
