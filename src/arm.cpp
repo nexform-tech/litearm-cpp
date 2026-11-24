@@ -954,15 +954,56 @@ std::string Arm::zero_g_error_text() {
 /// 该做的是调大 budget, 而不是指望这条兜底变长。
 static constexpr double kArriveHardCapFactor = 4.0;
 
-RobotState Arm::arrive(const std::vector<double>& target, double timeout) {
+/// 到位容差的**位移缩放**: 单轴实际容差 = min(q_tol, max(floor, frac * |指令位移|))。
+///
+/// 为什么必须有: `q_tol` 是绝对的, 与本次要走多远无关。当位移本身 <= q_tol 时,
+/// `|q - target| < q_tol` 在**发出命令之前**就成立, 于是 3 帧后 (约 30ms) 就判到位 ——
+/// 臂其实还没动。真机实测 (1.12.3, speed=1%): 0.03 rad 指令 0.28s 返回 "到位", 实际
+/// 只走了 0.0012 rad; 1s 后固件仍在走。同理, 轴被顶住/拖慢时也会被误判成功。
+///
+/// 取 10% + 5mrad 下限: 大行程由比例项主导 (0.2 rad -> 20mrad; 1 rad 仍由 q_tol
+/// 封顶 30mrad), 小行程由下限托底 —— 实测固件停稳后的稳态偏差就有 2..5mrad
+/// (0.03 rad 指令停在差 2.4mrad; 0.2 rad 指令停在差 4.9mrad), 下限低于它会让
+/// 正常的到位被判成超时。位移 < 10mrad 时不再收紧: 那已进入伺服死区, 强行要求
+/// 只会每次超时。
+static constexpr double kArriveTolFrac = 0.10;
+static constexpr double kArriveTolFloor = 5e-3;    // rad, 实测稳态偏差之上
+static constexpr double kArriveTolMinMove = 1e-2;  // rad
+
+namespace {
+/// 取当前状态里的 q 快照 (持 Ack::mu)。没有状态帧时返回空。
+std::vector<double> snapshot_q(Ack& a) {
+    std::vector<double> q;
+    Ack::MuLock lk(a.mu, a.dbg_mu_owner);
+    a.dbg_check("snapshot_q");
+    if (a.state) q = a.state->q();
+    return q;
+}
+}  // namespace
+
+RobotState Arm::arrive(const std::vector<double>& target, double timeout,
+                       const std::vector<double>& start_in) {
     Ack& a = require();
     const std::vector<double> tgt = target;
+    // 起点优先用调用方在**发命令之前**采的 q: 等 ACK 的窗口里臂可能已经动了一截,
+    // 那时再取会把指令位移估小、容差收得过紧。没有就退回"现在这一帧"。
+    std::vector<double> start = start_in;
+    if (start.empty()) start = snapshot_q(a);
+    std::vector<double> tol(tgt.size(), q_tol);
+    if (start.size() == tgt.size()) {
+        for (size_t i = 0; i < tgt.size(); ++i) {
+            const double delta = std::fabs(tgt[i] - start[i]);
+            if (delta >= kArriveTolMinMove) {
+                tol[i] = std::min(q_tol, std::max(kArriveTolFloor, kArriveTolFrac * delta));
+            }
+        }
+    }
     const double budget = (timeout < 0.0) ? move_timeout : timeout;
     auto done = [&](const RobotState& st) {
         if (int(st.joints.size()) != int(tgt.size())) return false;
         const auto qs = st.q();
         for (size_t i = 0; i < tgt.size(); ++i) {
-            if (std::fabs(qs[i] - tgt[i]) >= q_tol) return false;
+            if (std::fabs(qs[i] - tgt[i]) >= tol[i]) return false;
         }
         for (double d : st.dq()) {
             if (std::fabs(d) >= dq_tol) return false;
@@ -1127,12 +1168,13 @@ RobotState Arm::movej(const std::vector<double>& q, double speed) {
     //   "长度不匹配 ⇒ 放行"那一支在这里**不可达**, 真正生效的是越限与非有限值两条)。
     // ⚠ 而上面的 speed 检查**保持 Python 原文案不动** —— 只有 `move_p` 那只速度预检是新增的。
     precheck_q_(q, "movej");
+    const std::vector<double> start = snapshot_q(a);
     std::vector<uint8_t> payload = proto::pack_f32s(q);
     const auto sp = proto::pack_f32le(speed);
     payload.insert(payload.end(), sp.begin(), sp.end());
     write_cmd(proto::CMD_MOVE_J, payload);
     a.expect(proto::RSP_ACK, 1.0, "movej", true, proto::CMD_MOVE_J);
-    return arrive(q);
+    return arrive(q, -1.0, start);
 }
 
 RobotState Arm::movej_sync(const std::vector<double>& q, double speed) {
@@ -1144,12 +1186,13 @@ RobotState Arm::movej_sync(const std::vector<double>& q, double speed) {
     }
     // 软限预检 —— 与 `movej` 同一条理由与同一个位置 (见那里)。
     precheck_q_(q, "movej_sync");
+    const std::vector<double> start = snapshot_q(a);
     std::vector<uint8_t> payload = proto::pack_f32s(q);
     const auto sp = proto::pack_f32le(speed);
     payload.insert(payload.end(), sp.begin(), sp.end());
     write_cmd(proto::CMD_MOVE_J_SYNC, payload);
     a.expect(proto::RSP_ACK, 1.0, "movej_sync", true, proto::CMD_MOVE_J_SYNC);
-    return arrive(q);
+    return arrive(q, -1.0, start);
 }
 
 bool Arm::pose_near(const std::array<double, 6>& tcp, const std::array<double, 6>& goal,
@@ -1219,10 +1262,11 @@ RobotState Arm::move_p(const rot::PoseInput& pose, double speed, double pos_tol,
 
 RobotState Arm::home(double timeout) {
     // timeout 语义与 arrive 一致: <0 表示用 move_timeout。
-    write_cmd(proto::CMD_HOME);
     Ack& a = require();
+    const std::vector<double> start = snapshot_q(a);
+    write_cmd(proto::CMD_HOME);
     a.expect(proto::RSP_ACK, 1.5, "home", true, proto::CMD_HOME);
-    return arrive(std::vector<double>(size_t(n_), 0.0), timeout);
+    return arrive(std::vector<double>(size_t(n_), 0.0), timeout, start);
 }
 
 void Arm::move_js(const std::vector<double>& q, const std::vector<double>& dq,

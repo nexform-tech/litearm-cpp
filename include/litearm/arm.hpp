@@ -153,6 +153,12 @@ struct ArmOptions {
     ///   发生"的判据**挂死**。假钟只给"**纯比较**"类判据用。
     std::shared_ptr<const Clock> clock;
     proto::FirmwareVersion min_firmware = MIN_FW;
+    /// 到位位置容差 (rad), 是**上限**而不是固定值。每轴实际容差还会按该轴指令位移的
+    /// 10% 收紧、并以 5mrad 托底 (位移 < 10mrad 时不收紧 —— 已进入伺服死区) ——
+    /// 否则位移 <= q_tol 的小步在发出命令前就已满足 `|q-target| < q_tol`, 会在臂还
+    /// 没动时被判到位 (真机实测: 0.03 rad 指令在 1% 速度下 0.28s 返回, 实际只走
+    /// 0.0012 rad; 修复后 1.64s 返回, 实际 0.0272 rad)。5mrad 下限来自实测稳态
+    /// 偏差 2..5mrad, 低于它会把正常到位判成超时。
     double q_tol = 0.03;
     double dq_tol = 0.10;
     int arrive_frames = 3;
@@ -708,7 +714,9 @@ private:
     /// 驱动型读者: 等到 done(a) 为真、或链路没了、或窗口用尽。一条帧都不认领。
     bool pump_until(double timeout, const std::function<bool(Ack&)>& done,
                     const std::string& label);
-    RobotState arrive(const std::vector<double>& target, double timeout = -1.0);
+    /// `start` = 发命令**之前**的实测 q, 只用于按指令位移缩放到位容差; 空则等到位时现取。
+    RobotState arrive(const std::vector<double>& target, double timeout = -1.0,
+                      const std::vector<double>& start = {});
     bool pose_near(const std::array<double, 6>& tcp, const std::array<double, 6>& goal,
                    double pos_tol, double rpy_tol) const;
     Msg<std::optional<RobotState>> msg_state(const std::optional<RobotState>& v);

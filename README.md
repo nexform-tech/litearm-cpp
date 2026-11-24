@@ -379,11 +379,19 @@ arm.options();              // the options in effect (**current values**, not a 
 ### Tunable knobs
 
 ```cpp
-arm.q_tol = 0.03;           // arrival criterion: joint angle tolerance (rad)
+arm.q_tol = 0.03;           // arrival criterion: joint angle tolerance **cap** (rad)
 arm.dq_tol = 0.10;          // arrival criterion: joint velocity tolerance (rad/s)
 arm.arrive_frames = 3;      // consecutive at-rest frames
 arm.move_timeout = 15.0;    // motion wait window (seconds) -- ⚠ changing it requires reconnect()
 ```
+
+**Caution:** `q_tol` is a **cap**, not a fixed value: the per-axis tolerance is
+`min(q_tol, max(5 mrad, 10% × |that axis's commanded move|))`. Otherwise a move whose size
+is ≤ `q_tol` already satisfies `|q-target| < q_tol` **before the command is sent**, so it is
+reported as arrived before the arm has moved (measured on real 1.12.3 hardware: a 0.03 rad
+command at 1% speed returned after 0.28 s having moved only 0.0012 rad; with the fix it
+returned after 1.49 s having moved 0.0272 rad). The 5 mrad floor comes from the measured
+2–5 mrad steady-state error; moves below 10 mrad are not tightened (servo deadband).
 
 ## The `Msg<T>` return envelope
 
@@ -547,7 +555,7 @@ document describe the suite that was removed on 2026-10-26; they are historical.
 and **every entry must carry a source reference** (`file:line`), otherwise it does not count
 as registered (nobody can re-check it in the field). Skim it before saying "this was tested".
 
-## Relationship to the original (litearm-python 2.1.0)
+## Relationship to the original (litearm-python 2.4.1)
 
 **Ported item by item**, with an identical wire protocol and semantics; differences are purely
 at the language level:
@@ -562,9 +570,9 @@ at the language level:
 | Teardown | `__del__` backstop | destructor backstop (likewise delegates to `close()` only) |
 | Test suite | pytest (upstream) | none in this repository |
 
-### Four deliberate divergences from the original (since 2026-09-28)
+### Five deliberate divergences from the original
 
-> All four were aligned to a second, independent C++ implementation (the Gitee repository
+> The first four (2026-09-28) were aligned to a second, independent C++ implementation (the Gitee repository
 > `yudao_hz_1/litearm-cpp`, branch `feat/p0-protocol-layer`). **Within the range both cover, it
 > is byte-for-byte identical to the Python reference** (its golden samples drive this
 > repository to 19/19); the only disagreements are the trade-offs below.
@@ -660,6 +668,21 @@ scheduler wake up on time". Criteria in `tests/test_clock.cpp`.
 ⚠ **What does not follow the injection**: the transport layer (`transport.cpp`) **keeps the
 real clock** — its `poll` / `tcdrain` timeouts are **hardware** timeouts, where injecting a
 fake clock would be **wrong**, not merely useless.
+
+#### 5. Arrival tolerance scales with the commanded move (the original uses the absolute `q_tol`)
+
+The original's `_arrive` checks `|q - target| < q_tol` with a **fixed** `q_tol`, independent of
+how far this command asks the arm to go. When the move is **≤ `q_tol`**, that inequality is
+already true **before the command is sent** ⇒ after `arrive_frames` (≈30 ms) it reports
+"arrived" while the arm has barely moved. Measured on real 1.12.3 hardware (J1, a 0.03 rad
+command at 1 % speed): the fixed criterion returned after **0.28 s having moved 0.0012 rad**,
+and the firmware kept moving afterwards; the scaled criterion returns after **1.49 s having
+moved 0.0272 rad**.
+
+This port now uses a per-axis tolerance `min(q_tol, max(5 mrad, 10 % × |Δq_axis|))`, with no
+scaling below 10 mrad. The 5 mrad floor is the measured 2–5 mrad steady-state error — going
+below it turns normal arrivals into timeouts. The same criterion covers `movej_sync` and
+`home()` (both go through `Arm::arrive`).
 
 ### Known inherited gaps (all of them exist in the original; none were introduced by the port)
 
