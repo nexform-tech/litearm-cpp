@@ -55,9 +55,7 @@ TEST(ident_write_model_optional_jm) {
 }
 
 TEST(ident_write_model_requires_seven_joints) {
-    lt::Offline bench("Litearm1.7.0-1J", 1);
-    const IdentResult r = cad_result();
-    WriteModelOptions opt;
-    opt.check_gravity = false;
-    CHECK_THROWS_AS(write_model(*bench, r, opt), InvalidCommandError);
+    // 1J 台架自上游 #11 起在 connect 阶段就被拒 (FirmwareMismatchError) ——
+    // 变体门放在 Arm::connect(), write_model 的 7 关节检查轮不到它。
+    CHECK_THROWS_AS(lt::Offline("Litearm1.7.0-1J", 1), FirmwareMismatchError);
 }
