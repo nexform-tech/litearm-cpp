@@ -67,6 +67,16 @@ add_subdirectory(third_party/litearm-cpp)
 target_link_libraries(your_app PRIVATE litearm::litearm)
 ```
 
+### Optional dynamics identification
+
+`-DLITEARM_BUILD_IDENT=ON` builds the optional `litearm::ident` module and the
+`10_identify` example. It ports the Python SDK's 96-parameter Fourier
+identification (70 inertia, symmetric/asymmetric Coulomb, viscous, jm3..jm7),
+supports offline solving of a Python `fourier_log.csv`, real-arm pure-PD capture
+through `send_mit_all` + the 300 Hz firmware log, and a guarded
+`--write-model` path. Eigen3 is required only for this target; the core SDK
+stays dependency-free. See [`docs/IDENTIFICATION.md`](docs/IDENTIFICATION.md).
+
 ### Installing and packaging
 
 ```bash
