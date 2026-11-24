@@ -2,12 +2,12 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bin="$root/build-ident/08_zero_g_drag"
+bin="$root/build/08_zero_g_drag"
 if [[ ! -x "$bin" ]]; then
   bin="$root/build/08_zero_g_drag"
 fi
 if [[ ! -x "$bin" ]]; then
-  echo "找不到 08_zero_g_drag；先运行 cmake --build build-ident -j\"\$(nproc)\"" >&2
+  echo "找不到 08_zero_g_drag；先运行 cmake --build build -j\"\$(nproc)\"" >&2
   exit 1
 fi
 

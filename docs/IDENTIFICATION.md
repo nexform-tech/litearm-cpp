@@ -6,10 +6,10 @@ This module ports the Python SDK's 96-parameter Fourier identification into
 ## Build
 
 ```bash
-cmake -S . -B build-ident -DCMAKE_BUILD_TYPE=Release \
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DLITEARM_BUILD_IDENT=ON -DLITEARM_BUILD_TESTS=ON -DLITEARM_BUILD_EXAMPLES=ON
-cmake --build build-ident -j"$(nproc)"
-ctest --test-dir build-ident -R 'test_ident_' --output-on-failure
+cmake --build build -j"$(nproc)"
+ctest --test-dir build -R 'test_ident_' --output-on-failure
 ```
 
 The optional target needs Eigen3 (header-only). The public headers under
@@ -99,7 +99,7 @@ may impose additional range checks; see `UNVERIFIED_REGISTER.md`.
 ## Offline use (no arm)
 
 ```bash
-./build-ident/10_identify \
+./build/10_identify \
   --input-csv /path/to/fourier_log.csv \
   --output ident_result
 ```
@@ -146,11 +146,11 @@ recovered.
 
 ```bash
 # Read-only plan (connects, reads limits, does not move)
-./build-ident/10_identify
+./build/10_identify
 
 # Real capture of the default coefficient file; keep the stop within reach
-./build-ident/10_identify --go --cycles 1
-./build-ident/10_identify --go --cycles 4 --output ident_result
+./build/10_identify --go --cycles 1
+./build/10_identify --go --cycles 4 --output ident_result
 ```
 
 The command loop aborts on a send-deadline slip, joint fault, or excessive
@@ -214,19 +214,19 @@ error — that is the runtime hardware guard, not trajectory design.
 
 ```bash
 # Read-only plan for the default two-segment file
-./build-ident/10_identify
+./build/10_identify
 
 # Capture both default segments
-./build-ident/10_identify --go --cycles 1 \
+./build/10_identify --go --cycles 1 \
   --sn-template /path/to/SN<serial>.yaml
 
 # A different coefficient file
-./build-ident/10_identify --go --cycles 1 \
+./build/10_identify --go --cycles 1 \
   --coeffs /path/to/other_coeffs.txt \
   --sn-template /path/to/SN<serial>.yaml
 
 # Inline (154 numbers = 2 segments); use =LIST if the first value is negative
-./build-ident/10_identify --go --cycles 1 \
+./build/10_identify --go --cycles 1 \
   --coeffs-inline='0.1, 0.2, ...' \
   --sn-template /path/to/SN<serial>.yaml
 ```
@@ -260,10 +260,10 @@ friction; in particular a solve that wants negative `jm` is clamped to 0.
 
 ```bash
 # Default scheme: fixed examples/SN.yaml, friction/armature only
-./build-ident/10_identify --input-csv ident_result/fourier_log.csv
+./build/10_identify --input-csv ident_result/fourier_log.csv
 
 # Another fixed bank
-./build-ident/10_identify --input-csv ident_result/fourier_log.csv \
+./build/10_identify --input-csv ident_result/fourier_log.csv \
   --fixed-model path/to/SN.yaml --sn-template path/to/SN.yaml
 ```
 
@@ -294,8 +294,8 @@ declare the DH frame. Fixed-inertia outputs carry the
 check; other non-physical files require `--allow-nonphysical`.
 
 ```bash
-./build-ident/10_identify --go --cycles 4 --write-model
-./build-ident/10_identify --go --cycles 4 --write-model --write-jm
+./build/10_identify --go --cycles 4 --write-model
+./build/10_identify --go --cycles 4 --write-model --write-jm
 ```
 
 To write an existing result without capturing again, add `--load-result`.
@@ -303,8 +303,8 @@ Without `--write-model` it only parses the file and prints the mass/friction
 summary:
 
 ```bash
-./build-ident/10_identify --load-result ident_result/SN_20261117_143620.yaml
-./build-ident/10_identify --load-result ident_result/SN_20261117_143620.yaml --write-model
+./build/10_identify --load-result ident_result/SN_20261117_143620.yaml
+./build/10_identify --load-result ident_result/SN_20261117_143620.yaml --write-model
 ```
 
 For an SN file the loader reads the seven `dynamics_parameters` blocks and
@@ -350,9 +350,9 @@ empty-model error and static-friction bias):
 
 ```bash
 # 1. payload removed
-./build-ident/11_identify_payload --go --capture-baseline payload_baseline.csv
+./build/11_identify_payload --go --capture-baseline payload_baseline.csv
 # 2. payload installed (empty-arm model = the firmware bank)
-./build-ident/11_identify_payload --go --baseline payload_baseline.csv
+./build/11_identify_payload --go --baseline payload_baseline.csv
 ```
 
 The baseline is transported to the loaded poses with
@@ -363,7 +363,7 @@ prints a warning. Absolute mode uses the empty-arm gravity (firmware bank by
 default) and is more sensitive to model error and stiction:
 
 ```bash
-./build-ident/11_identify_payload --go --absolute
+./build/11_identify_payload --go --absolute
 ```
 
 Capture uses 5 static wrist poses: J1 and J3 stay at zero, J2 is fixed at 0.9,
@@ -384,7 +384,7 @@ capture is always written to `<out>/payload_loaded_<stamp>.csv` (or
 arm:
 
 ```bash
-./build-ident/11_identify_payload \
+./build/11_identify_payload \
   --loaded-csv payload_loaded_<stamp>.csv \
   --baseline-csv payload_baseline.csv \
   --load-params ident_result/SN_<stamp>.yaml
