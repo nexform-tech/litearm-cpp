@@ -88,7 +88,8 @@ const std::map<std::pair<int, int>, std::string>& build_err_text() {
 
         // ---- 0x06 ZERO_G (进入/退出拖动示教; 重发即保活) ----
         {{0x06, 0x01}, "载荷长度不足 (需 1 字节: on)"},
-        {{0x06, 0x02}, "拒绝: EMERGENCY 锁存 (进入与退出都拒), 或进入时未使能 "
+        {{0x06, 0x02}, "拒绝: EMERGENCY 锁存 (进入与退出都拒), 或**进入**时未使能, "
+                       "或**进入**时掉线刚性持位锁存 (drop_hold) 中 "
                        "(退出 on=0 幂等, 未使能也收)"},
 
         // ---- 0x2A HOME (回零位舒展姿; 内部复用 ctrl_accept_move_j) ----
@@ -160,23 +161,27 @@ const std::map<std::pair<int, int>, std::string>& build_err_text() {
 
         // ---- 0x26 / 0x27 / 0x28 / 0x2B / 0x2C / 0x31 前馈与动力学旋钮 ----
         {{0x26, 0x01}, "载荷长度不足 (需 1 + 4xDOF 字节)"},
-        {{0x26, 0x02}, "item 越界 (1..15), 或值非法 (NaN / item>=9 的符号契约不符: "
-                       "fv>=0, fc0>=0, fc1<=0)"},
+        {{0x26, 0x02}, "item 越界 (1.12.3 合法集 = 1..11、15、16; 12..14 已删并显式"
+                       "拒绝), 或值非法: 任一分量 NaN; item 9/10/16 要求 >=0, item 11 "
+                       "要求 <=0; item 15 (kd_extra) **没有**符号拒绝 —— 负值静默钳到 0 "
+                       "并回 ACK"},
         {{0x26, 0x04}, "[仅 feat/hyy-model-import 分支] item 7 (gravity_scale) 武装态拒 "
                        "—— 须先失能"},
         {{0x27, 0x01}, "载荷长度不足 (需 4 字节: ff_mask)"},
         {{0x28, 0x01}, "载荷长度不足 (需 6 字节: item + sub + f32)"},
-        {{0x28, 0x02}, "item 越界 (合法区间是 1..8 与 10..18; item 9 已保留给 0x2C 读 "
-                       "ff_mask, 写它走 default 同样回本码), 或值非法 —— 只有三类: "
-                       "NaN、item 5/6 的 sub>2、item 7 的 v 不属于 {0,1,2}。"
+        {{0x28, 0x02}, "item 越界 (1.12.3 合法集 = 1..8、11、17、18; **item 9 已保留**"
+                       "给 0x2C 读 ff_mask; item 10 与 12..16 已删 —— 9、10、12..16 写 "
+                       "它们都走 default 回本码), 或值非法 —— 只有三类: NaN、item 5/6 "
+                       "的 sub>2、item 7 的 v 不属于 {0,1,2}。"
                        "幅值一律静默钳制只对有 clamp 的那些 item 成立: 它们过 "
                        "ff_clamp() 后照样 return true 回 ACK。例: payload_mass 钳 [0,20] "
                        "=> set_payload(-5) 回 ACK 并把质量静默钳成 0, 不是被拒"},
         {{0x28, 0x04}, "[仅 feat/hyy-model-import 分支] item 6 (gravity 向量) 武装态拒"},
         {{0x2B, 0x01}, "载荷长度不足 (需 1 字节: item)"},
-        {{0x2B, 0x02}, "item 越界 (须 1..15)"},
+        {{0x2B, 0x02}, "item 越界 (1.12.3 合法集 = 1..11、15、16; 12..14 已删并显式拒绝)"},
         {{0x2C, 0x01}, "载荷长度不足 (需 2 字节: item + sub)"},
-        {{0x2C, 0x02}, "item 越界 (须 1..18)"},
+        {{0x2C, 0x02}, "item 越界 (1.12.3 合法集 = 1..9、11、17、18; item 9 = ff_mask "
+                       "只读; item 10 与 12..16 已删并显式拒绝)"},
         {{0x31, 0x02}, "preset 非法 (须 0..2), 或载荷长度不足 (两者共用本码)"},
 
         // ---- 0x30 / 0x32 / 0x33 / 0x34 / 0x37 / 0x39 动力学模型在线导入 ----
@@ -247,6 +252,58 @@ std::string err_reason(uint8_t cmd, uint8_t code) {
     return "**未登记的固件错误码** cmd=0x" + hex2(cmd) + ", code=0x" + hex2(code) +
            " —— 子版本可能比本 SDK 新, 请对照固件 usb_cmd.c 的 "
            "usb_cmd_reply(RSP_ERR...)";
+}
+
+std::string fault_reason_code(int reason) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "FF-%02X", reason & 0xFF);
+    return buf;
+}
+
+std::string fault_reason_text(int reason) {
+    // 码 = 固件原始枚举 (FAULT_R_*), 文案 = 标题 (原因) —— 处置。
+    // 0 是"未锁存", 不是一种故障; 未登记的码带出原始值, 不静默。
+    switch (reason) {
+        case proto::FAULT_R_NONE:
+            return "未锁存";
+        case proto::FAULT_R_FB_STALE:
+            return "CAN 反馈丢失 (该轴 80 ms 未收到反馈) —— 检查 CAN 线与端子 / "
+                   "驱动供电, 复位后重新使能";
+        case proto::FAULT_R_POS_LIMIT:
+            return "位置越软限位 (实测位置超出软限位 50 mrad 以上) —— 推回限位内, "
+                   "复位后重新使能";
+        case proto::FAULT_R_OVERSPEED:
+            return "超速 (速度超过 vel_max 的 1.5 倍) —— 降低轨迹速度, 复位";
+        case proto::FAULT_R_MOTOR_ERR:
+            return "电机自保护失能 (电机状态码连续 20 拍不等于 1) —— 检查 CAN 单向断 "
+                   "与驱动供电, 复位";
+        case proto::FAULT_R_TEMP:
+            return "过温 (MOS 或线圈温度超过阈值) —— 停机散热, 降温后复位";
+        case proto::FAULT_R_FOLLOW_ERR:
+            return "跟随误差超限 (实测位置与指令偏差超过 following_error) —— 检查负载 "
+                   "与堵转, 复位";
+        case proto::FAULT_R_NONFINITE:
+            return "反馈非有限值 (反馈出现 NaN/Inf) —— 检查编码器与总线, 复位";
+        default:
+            break;
+    }
+    return "**未登记的故障原因** " + fault_reason_code(reason) +
+           " —— 子版本可能比本 SDK 新, 请对照固件 litearm.h 的 FAULT_R_*";
+}
+
+std::string drop_hold_reason_text(int reason) {
+    switch (reason) {
+        case proto::DROP_R_NONE:
+            return "未锁存";
+        case proto::DROP_R_FB_STALE:
+            return "该轴 CAN 反馈丢失";
+        case proto::DROP_R_MOTOR_ERR:
+            return "电机自保护失能";
+        default:
+            break;
+    }
+    return "**未登记的掉线持位原因** " + fault_reason_code(reason) +
+           " —— 子版本可能比本 SDK 新, 请对照固件 litearm.h 的 DROP_R_*";
 }
 
 const std::set<uint8_t>& enable_retryable_codes() {

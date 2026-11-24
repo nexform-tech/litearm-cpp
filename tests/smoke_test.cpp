@@ -29,7 +29,7 @@ bool near(double got, double want, double eps = 1e-9) {
 }  // namespace
 
 int main() {
-    check(std::string(litearm::version()) == "2.1.0", "version");
+    check(std::string(litearm::version()) == "2.4.1", "version");
 
     // CRC-16/CCITT-FALSE check value for "123456789" is 0x29B1.
     const std::string text = "123456789";

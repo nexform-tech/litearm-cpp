@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "litearm/ack.hpp"
@@ -111,6 +112,25 @@ struct LicenseInfo {
 /// RSP_LICENSE 的 state 字节 -> 可读名。
 const char* license_state_name(int state);
 
+/// 故障详情 —— CMD_GET_FAULT(0x51) 的应答 (固件 1.12.3+)。
+///
+/// 只在 `RobotState::fault_detail_available()` (flags bit11) 为真时按需读取 ——
+/// 正常运行时没有这次往返。旧固件回 ERR{0x51,0x00} -> UnsupportedByFirmwareError,
+/// 调用方降级为"原因不可知"即可。
+struct FaultDetail {
+    /// 最近一次锁存 (EMERGENCY 或 G7) 所在控制拍; 0 = 无锁存。
+    uint32_t fault_tick = 0;
+    /// 锁存当拍 flags 低 6 位快照 (原始位图, 不翻译)。
+    uint8_t fault_cause = 0;
+    /// 每轴原因码 (FAULT_R_*; 0 = 未锁存), 下标即轴号。
+    std::vector<uint8_t> fault_reason;
+    /// 整臂掉线刚性持位原因 (DROP_R_*): 0 / 1(CAN 丢失) / 2(电机自保护)。
+    uint8_t drop_hold_reason = 0;
+
+    /// 已锁存轴的 (轴号, 原因码), 0 基 —— 只列 reason != 0 的轴。
+    std::vector<std::pair<int, int>> fault_reasons() const;
+};
+
 /// 构造参数 —— 对应 Python 侧 Arm(...) 的关键字参数。
 struct ArmOptions {
     /// 串口路径。不设则自动发现 (VID:PID 1d50:606f)。
@@ -133,6 +153,12 @@ struct ArmOptions {
     ///   发生"的判据**挂死**。假钟只给"**纯比较**"类判据用。
     std::shared_ptr<const Clock> clock;
     proto::FirmwareVersion min_firmware = MIN_FW;
+    /// 到位位置容差 (rad), 是**上限**而不是固定值。每轴实际容差还会按该轴指令位移的
+    /// 10% 收紧、并以 5mrad 托底 (位移 < 10mrad 时不收紧 —— 已进入伺服死区) ——
+    /// 否则位移 <= q_tol 的小步在发出命令前就已满足 `|q-target| < q_tol`, 会在臂还
+    /// 没动时被判到位 (真机实测: 0.03 rad 指令在 1% 速度下 0.28s 返回, 实际只走
+    /// 0.0012 rad; 修复后 1.64s 返回, 实际 0.0272 rad)。5mrad 下限来自实测稳态
+    /// 偏差 2..5mrad, 低于它会把正常到位判成超时。
     double q_tol = 0.03;
     double dq_tol = 0.10;
     int arrive_frames = 3;
@@ -249,6 +275,15 @@ public:
     /// 与 get_state() 的区别: 后者只消费被动流, 链路静默时只能靠超时发现。
     /// timeout <= 0 时语义是"立刻返回当前缓存"。
     Msg<RobotState> get_status_now(double timeout = 0.5);
+
+    /// 按需读取故障详情 (CMD_GET_FAULT 0x51, 固件 1.12.3+)。
+    ///
+    /// 只在 `get_state().value->fault_detail_available()` (flags bit11) 为真时调用 ——
+    /// 正常运行时没有这次往返。旧固件回 ERR{0x51,0x00} -> `UnsupportedByFirmwareError`,
+    /// 调用方降级为"原因不可知"即可。
+    ///
+    /// 刻意不返回 Msg: RSP_FAULT 没有固件发起的流量 —— 它是请求/应答式的故障快照。
+    FaultDetail get_fault_detail(double timeout = 1.0);
 
     /// 当前末端位姿 pos[3]+rpy[3] (固件当前反馈 FK)。取不到时 value 为空。
     Msg<std::optional<std::array<double, 6>>> get_tcp(double timeout = 0.6);
@@ -395,22 +430,32 @@ public:
     /// 前馈预设: 0 全关 / 1 出厂 / 2 全开。
     void ff_preset(int preset);
 
-    /// set_ff_vec 的 item -> 含义 (与固件 params_ff_vec 的守卫/case 一一对应)。
+    /// set_ff_vec 的 item -> 含义 (**已知项对照表, 不是客户端白名单**)。
+    ///
+    /// ⚠ 本表只作文档, **不参与校验**: item 合法性只由固件判定 (ERR{cmd,0x02} = 不支持)。
+    ///   白名单会与固件版本耦合 —— 1.10.x 上 item 12..14 仍可读写, 1.11.0 才删除;
+    ///   1.12.0 又新增 16。维护白名单必然把某个版本的真参数挡在门外。
     static const std::vector<std::pair<int, std::string>>& ff_vec_items();
     /// set_ff_scalar 的 item -> 含义 (item 9 保留: 写口拒绝, 只给 0x2C 读 ff_mask)。
+    /// 同样是文档表, 不是白名单。
     static const std::vector<std::pair<int, std::string>>& ff_scalar_items();
     /// 0x2C 只读 item (写口不接受的)。
     static const std::vector<std::pair<int, std::string>>& ff_scalar_ro_items();
 
-    /// 写 0x26 向量。item 见 ff_vec_items() (1..15), values 恒 7 个。
+    /// 写 0x26 向量。values 恒 7 个; item 是否支持由固件判定 (1..255 透传)。
     void set_ff_vec(int item, const std::vector<double>& values);
-    /// 写 0x28 标量。item 见 ff_scalar_items(); sub 仅 item 5/6 有意义 (0..2)。
+    /// 写 0x28 标量。sub 仅 item 5/6 有意义 (0..2); item 是否支持由固件判定。
     void set_ff_scalar(int item, int sub, double value);
 
     /// 读回 0x26 向量 (7 值)。与 set_ff_vec 同 item 编号。
     Msg<std::vector<double>> get_ff_vec(int item, double timeout = 1.0);
     /// 读回 0x28 标量。item 9 为只读扩展 (ff_mask)。
     Msg<double> get_ff_scalar(int item, int sub = 0, double timeout = 1.0);
+    /// 逐关节拖动摩擦补偿比例 (0x26 item16, 7 值, 固件钳 [0,5]; 默认 0.6)。
+    /// 对应厂商 MITDragDemo 的 coeff[ROBOT_MAX_DOF]。
+    void set_drag_gain(const std::vector<double>& gains);
+    /// 读回逐关节拖动摩擦补偿比例 (0x26 item16, 7 值)。
+    Msg<std::vector<double>> get_drag_gain(double timeout = 1.0);
     /// 读回 ff_mask (走 0x2C item 9; 值 <=0x1FF, f32 精确)。
     /// 刻意保持裸整数 (不返回 Msg): 它是 get_ff_scalar(9, 0) 的标量投影, round(Msg)
     /// 没有意义, 它只能消费裸值。
@@ -669,7 +714,9 @@ private:
     /// 驱动型读者: 等到 done(a) 为真、或链路没了、或窗口用尽。一条帧都不认领。
     bool pump_until(double timeout, const std::function<bool(Ack&)>& done,
                     const std::string& label);
-    RobotState arrive(const std::vector<double>& target, double timeout = -1.0);
+    /// `start` = 发命令**之前**的实测 q, 只用于按指令位移缩放到位容差; 空则等到位时现取。
+    RobotState arrive(const std::vector<double>& target, double timeout = -1.0,
+                      const std::vector<double>& start = {});
     bool pose_near(const std::array<double, 6>& tcp, const std::array<double, 6>& goal,
                    double pos_tol, double rpy_tol) const;
     Msg<std::optional<RobotState>> msg_state(const std::optional<RobotState>& v);

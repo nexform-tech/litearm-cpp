@@ -107,6 +107,7 @@ FakeTransport::FakeTransport(const std::string& port_in, double timeout_in,
     }
     license_uid = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
                    0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B};
+    fault_reason.assign(size_t(n), 0);
     kin_bench_text = KIN_BENCH_TEXT;
 }
 
@@ -351,6 +352,16 @@ void FakeTransport::write_frame(uint8_t cmd, const uint8_t* payload, size_t len)
             enabled = true;
             push(proto::pack_frame(proto::RSP_ACK, std::vector<uint8_t>{cmd}));
         }
+    } else if (cmd == proto::CMD_GET_FAULT) {      // [1.12.3] 0x51 -> RSP_FAULT
+        // 载荷 = fault_tick u32 LE + fault_cause u8 + reason[n] u8 + drop u8。
+        // ⚠ 不含冗余 RSP id —— 与 RSP_STATUS 同惯例 (RSP_FF_VEC 那种是历史特例)。
+        std::vector<uint8_t> body = proto::pack_u32le(fault_tick);
+        body.push_back(fault_cause);
+        for (int i = 0; i < n; ++i) {
+            body.push_back(i < int(fault_reason.size()) ? fault_reason[size_t(i)] : 0);
+        }
+        body.push_back(drop_hold_reason);
+        push(proto::pack_frame(proto::RSP_FAULT, body));
     } else if (cmd == proto::CMD_GET_LICENSE) {    // 0x2F -> RSP_LICENSE(0x4F) 26B
         // 请求不校验长度 (有意放宽); 未激活也回 UID, 而 cust_id/issued/flags 保持 0;
         // 载荷首字节是 state, 不是冗余帧 id。
@@ -741,6 +752,20 @@ std::optional<proto::Frame> FakeTransport::stamp_status(std::optional<proto::Fra
         } else if (cnt >= 2 && cnt <= 7) {
             flags |= uint16_t(1u << proto::FLAG_CART_BUSY_BIT);
         }
+    }
+    // [1.12.3] bit11 = 故障详情可查 (joint_fault 或 drop_hold 非 0) —— 与固件同判据。
+    // joint_fault 在状态帧尾部, 由 make_status 写入。
+    uint16_t jf = 0;
+    if (payload.size() >= 4 + 2) {
+        const size_t n = (payload.size() - 4) / 21;
+        if (payload.size() >= 4 + n * 21 + 2) {
+            jf = proto::read_u16le(payload, 4 + n * 21);
+        }
+    }
+    if (jf != 0 || drop_hold_reason != 0) {
+        flags |= uint16_t(1u << proto::FLAG_FAULT_DETAIL_BIT);
+    } else {
+        flags &= uint16_t(~(1u << proto::FLAG_FAULT_DETAIL_BIT));
     }
     const auto f = proto::pack_u16le(flags);
     payload[0] = f[0];

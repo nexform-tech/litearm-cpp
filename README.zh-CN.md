@@ -3,7 +3,7 @@
 LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中间没有服务器、没有中间件。
 轨迹规划、运动学与动力学全部由固件承担, PC 侧只发点、收结果。
 
-本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.1.0 的 C++ 移植:
+本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.4.1 的 C++ 移植:
 同一套线协议、同一套语义、同一套安全判据, 逐条对照移植; 测试同样全离线可跑。
 
 > 接口全景见 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
@@ -231,6 +231,18 @@ arm.get_status_now();                           // 主动要一帧
 arm.ik({0.30, 0.0, 0.35, 3.1416, 0.0, 0.0});    // 位姿 -> q[7]
 ```
 
+故障原因 (固件 1.12.3+): 状态帧只给 flags bit11, 详情走一次请求-应答 ——
+正常运行没有这次往返。旧固件没有 0x51, 会抛 `UnsupportedByFirmwareError`。
+
+```cpp
+if (st && st->fault_detail_available()) {        // flags bit11
+    FaultDetail d = arm.get_fault_detail();      // CMD_GET_FAULT 0x51
+    for (auto [axis, reason] : d.fault_reasons())
+        printf("J%d: %s\n", axis + 1, fault_reason_text(reason).c_str());
+    printf("drop_hold: %s\n", drop_hold_reason_text(d.drop_hold_reason).c_str());
+}
+```
+
 ### 生活 / 安全
 
 ```cpp
@@ -248,6 +260,8 @@ arm.set_gravity_scale({1,1,1,1,1,1,1});
 arm.ff_preset(1);                                       // 0 全关 / 1 出厂 / 2 全开
 double m = arm.get_ff_scalar(4).value;                  // 读回 payload_mass
 arm.get_ff_mask();                                      // ff_mask (0x2C item 9, 只读)
+arm.set_drag_gain({0.6,0.6,0.6,0.6,0.6,0.6,0.6});      // 0x26 item16, 逐关节拖动摩擦 (固件 1.12.0+)
+auto dg = arm.get_drag_gain().value;                    // 读回 7 值
 ```
 
 ### 拖动示教
@@ -347,11 +361,17 @@ arm.options();              // 当前生效的选项 (**现值**, 不是构造�
 ### 可调旋钮
 
 ```cpp
-arm.q_tol = 0.03;           // 到位判据: 关节角容差 (rad)
+arm.q_tol = 0.03;           // 到位判据: 关节角容差上限 (rad)
 arm.dq_tol = 0.10;          // 到位判据: 关节速度容差 (rad/s)
 arm.arrive_frames = 3;      // 连续静止拍数
 arm.move_timeout = 15.0;    // 动作等待窗口 (秒) —— ⚠ 改它要配 reconnect()
 ```
+
+⚠ `q_tol` 是**上限**, 不是固定值: 每轴实际容差 = `min(q_tol, max(5mrad, 10% × |本轴指令
+位移|))`。否则"位移 ≤ q_tol"的小步在发出命令前就已满足 `|q-target| < q_tol`, 会在臂
+还没动时被判到位 (真机 1.12.3 实测: 0.03 rad 指令在 1% 速度下 0.28s 返回, 实际只走
+0.0012 rad; 修正后 1.49s 返回, 实际 0.0272 rad)。5mrad 下限来自实测稳态偏差
+2..5mrad; 位移 < 10mrad 时不收紧 (已进入伺服死区)。
 
 ## 返回值信封 `Msg<T>`
 
@@ -494,7 +514,7 @@ C++ 里这一条的落法比 Python 更需要说清楚 —— 子进程里 `clos
 分叉的**」—— 每条**必须带出处**（`文件:行号`），否则等于没登记（现场复核不了）。
 报告里说"测过了"之前先扫一眼它。
 
-## 与原版 (litearm-python 2.1.0) 的关系
+## 与原版 (litearm-python 2.4.1) 的关系
 
 **逐条对照移植**, 线协议与语义完全一致; 差异只在语言层面:
 
@@ -508,9 +528,9 @@ C++ 里这一条的落法比 Python 更需要说清楚 —— 子进程里 `clos
 | 收尾 | `__del__` 兜底 | 析构兜底 (同样只委托给 `close()`) |
 | 测试套件 | pytest（上游） | 本仓库不包含测试套件 |
 
-### 本移植**有意**与原版分叉的四组 (2026-09-28 起)
+### 本移植**有意**与原版分叉的五组
 
-> 这三组都是照着另一套独立 C++ 实现 (Gitee `yudao_hz_1/litearm-cpp` 的 `feat/p0-protocol-layer`)
+> 前四组 (2026-09-28) 都是照着另一套独立 C++ 实现 (Gitee `yudao_hz_1/litearm-cpp` 的 `feat/p0-protocol-layer`)
 > 对齐的结果。**它与本仓在共同覆盖的范围内与 Python 参照逐字节一致** (用它的金样本驱动本仓
 > 跑过 19/19), 分歧只在下面这三处取舍上。
 
@@ -586,6 +606,17 @@ A 侧的结论一致（它的注释也写"凡'超时真的发生'的判据要用
 
 ⚠ **不跟着注入的**: 传输层（`transport.cpp`）的时间源**保持真钟** —— 那里的
 `poll` / `tcdrain` 超时是**硬件**超时，注入假钟是**错的**，不只是没用。
+
+#### ⑤ 到位容差按指令位移缩放 (原版用绝对 `q_tol`)
+
+原版 `_arrive` 用**固定** `q_tol` 判 `|q - target| < q_tol`, 与本次要走多远无关。当位移
+**≤ q_tol** 时, 这个不等式在**发出命令之前**就成立 ⇒ 约 30ms (`arrive_frames` 拍) 后即报
+"到位", 而臂几乎没动。真机 1.12.3 实测 (J1, 0.03 rad, 1% 速度): 固定判据 **0.28s 返回、
+实际只走 0.0012 rad**, 且固件之后仍在走; 缩放判据 **1.49s 返回、实际走 0.0272 rad**。
+
+本仓现在用每轴容差 `min(q_tol, max(5mrad, 10% × |Δq_axis|))`, 位移 < 10mrad 时不缩放。
+5mrad 下限来自实测稳态偏差 2..5mrad —— 低于它会把正常到位判成超时。`movej_sync` 与
+`home()` 走同一个 `Arm::arrive`, 一并生效。
 
 ### 已知继承的差异/缺口 (都**不是**移植引入的, 而是在原版里就存在):
 

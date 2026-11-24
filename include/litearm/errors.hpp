@@ -199,6 +199,18 @@ const std::map<int, std::string>& err_code_text();
 /// (cmd, code) -> 可读语义。未登记的码不静默 (三级查找, 认不出也把原始码带出来)。
 std::string err_reason(uint8_t cmd, uint8_t code);
 
+/// 固件故障原因码 (FAULT_R_*) -> 可读语义 (标题 + 原因 + 处置)。
+///
+/// 0 = "未锁存"; 未登记的码不静默 —— 返回 "**未登记的故障原因** FF-xx", 提示子版本
+/// 可能比 SDK 新。轴号由调用方自己加 (本函数不知道是哪个轴)。
+std::string fault_reason_text(int reason);
+
+/// 整臂掉线刚性持位原因码 (DROP_R_*) -> 可读语义。
+std::string drop_hold_reason_text(int reason);
+
+/// 故障原因的稳定码形, 如 1 -> "FF-01" (与 litearm-python 的 fault_code() 同形)。
+std::string fault_reason_code(int reason);
+
 /// CMD_ENABLE (0x10) 的返回码里值得重试的那些 —— Arm::enable 的重试白名单。
 ///
 /// 判据是白名单 ("只有它说可重试才重试") 而不是"黑名单": 固件对这几个码的注释是并列的:

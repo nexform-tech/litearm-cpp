@@ -206,6 +206,14 @@ public:
     /// 它们全折成这一档)。桩不可能真的验 MAC —— 它没有也不需要密钥 (规格硬要求)。
     bool license_fail_next = false;
 
+    // [1.12.3] 故障详情 (0x51)。fault_reason 下标即轴号, 默认全 0 (未锁存)。
+    // ⚠ 状态帧的 flags bit11 由 stamp_status 按 joint_fault / drop_hold_reason 自动盖,
+    //   与固件同判据 ("joint_fault 或 drop_hold 非 0")。
+    uint32_t fault_tick = 0;
+    uint8_t fault_cause = 0;
+    std::vector<uint8_t> fault_reason;
+    uint8_t drop_hold_reason = 0;
+
     double jp_kp = 50.0, jp_kd = 2.0, jp_tau_max = 10.0, jp_q_min = -3.0, jp_q_max = 3.0;
     std::vector<std::map<std::string, double>> joint_params;
 

@@ -18,6 +18,7 @@ const char* const kFlagNames[] = {"FAULT", "WD_TRIPPED", "FB_STALE",
 // 命令覆盖契约 —— 与 Python 侧 _protocol.COMMAND_COVERAGE 逐条一致。
 const std::vector<CommandCoverage> kCoverage = {
     {0x01, "Arm.movej"},
+    {0x51, "Arm.get_fault_detail"},   // [1.12.3] 故障详情按需查询
     {0x07, "Arm.movej_sync"},    {0x02, "Arm.move_p"},
     {0x03, "Arm.move_js"},
     {0x04, "Arm.send_mit"},
@@ -75,6 +76,7 @@ const std::vector<std::pair<uint8_t, uint8_t>> kRspOfCmd = {
     {0x2B, 0x4B},  // GET_FF_VEC       -> RSP_FF_VEC
     {0x2C, 0x4C},  // GET_FF_SCALAR    -> RSP_FF_SCALAR
     {0x2E, 0x4D},  // LOG_READ         -> RSP_LOG_DATA
+    {0x2F, 0x4F},  // GET_LICENSE      -> RSP_LICENSE
     {0x34, 0x54},  // GET_MODEL_PARAM  -> RSP_MODEL_PARAM
     {0x35, 0x55},  // GET_MODEL_JM     -> RSP_MODEL_JM
     {0x38, 0x56},  // GET_MODEL_STATUS -> RSP_MODEL_STATUS
@@ -83,6 +85,7 @@ const std::vector<std::pair<uint8_t, uint8_t>> kRspOfCmd = {
     {0x42, 0x47},  // GET_IK           -> RSP_IK
     {0x43, 0x48},  // GET_TCP          -> RSP_TCP
     {0x49, 0x4A},  // KIN_BENCH        -> RSP_KIN_BENCH
+    {0x51, 0x51},  // GET_FAULT        -> RSP_FAULT
 };
 
 float f32_at(const uint8_t* b, size_t off) {

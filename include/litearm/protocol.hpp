@@ -2,8 +2,8 @@
 //
 // 帧: SOF(0xA5) CMD(1B) LEN(1B) PAYLOAD(0..255) CRC16_LO CRC16_HI
 // CRC16-CCITT-FALSE, 覆盖 [SOF..PAYLOAD]。
-// 上行 100Hz 状态帧: 6+21N (固件 >=1.5.0, 尾部 joint_fault u16) 或 4+21N
-// (<=1.4.x, 仅兼容解析); 应答/异步返回穿插。
+// 上行 100Hz 状态帧: 6+21N (固件 >=1.5.0, 尾部 joint_fault u16; 1.12.3 起冻结在
+// 7J=153B) 或 4+21N (<=1.4.x, 仅兼容解析); 应答/异步返回穿插。新能力只走请求-应答。
 #pragma once
 
 #include <array>
@@ -60,19 +60,23 @@ inline constexpr uint8_t CMD_PARAM_RESET = 0x36;
 // [HOME] 回零位舒展姿 (空载荷): 目标=URDF 零位 0, 固件侧速度写死 0.10。
 inline constexpr uint8_t CMD_HOME = 0x2A;
 // item(1B)+f32[7]: 1 friction/2 ki/3 i_max/4-6 wall/7 gs/8 is
-//   9-11 摩擦 v2 (fv/fc0/fc1) / 12-14 零重力 (zg_kp/zg_kd/zg_damping) / 15 kd_extra
-// 12 zg_kp 松手保持的虚拟弹簧刚度 Nm/rad 钳 [0,500]
-// 13 zg_kd MIT 速度阻尼 (固件会抬到下限以上) 钳 [0,5]
-// 14 zg_damping 附加速度阻尼 Nm.s/rad, 出厂 0 钳 [0,50]
+//   9-11 摩擦 v2 (fv/fc0/fc1) / 15 kd_extra / 16 drag_gain
+// [固件 1.11.0] item 12-14 (zg_kp/zg_kd/zg_damping) **已删除** (零重力改为无状态律,
+//   不再有弹簧机), 编号留空不复用 —— 固件对它们回 ERR{0x26,0x02}。
+// [固件 1.12.0] item 16 = 逐关节拖动摩擦补偿比例 drag_gain, 钳 [0,5]; 默认 0.6。
+//   它取代了 0x28 上那个已删除的全局 item 10。
 // 15 kd_extra tau 域软件微分阻尼, 出厂 [6,6,6,6,0,0,0], 腕部 J5-J7 必须留 0。
 // 任一分量 NaN 整组拒绝 (ERR{0x26,0x02}), 幅值超限静默钳制。
+// 精确可写集 (1.12.3): 1..11、15、16。SDK 不维护白名单, 1..255 全部透传 ——
+// 固件回 ERR{0x26,0x02} 才算"不支持" (1.10.x 上 12..14 仍可读写)。
 inline constexpr uint8_t CMD_SET_FF_VEC = 0x26;
 inline constexpr uint8_t CMD_SET_FF_FLAGS = 0x27;      // u32 ff_mask LE
 // item+sub+f32: 1 fric_db/2 margin/3 slew/4 payload_mass/5 payload_com/6 gravity
-//   7 friction_model (0/1/2) / 8 fric_v2_eps
-//   10-17 零重力 (drag_gain/drag_db/drag_kd_margin/vel_thr/
-//            engage_sec/engage_kp/engage_kd/wall_fw_kd)
-//   18 hold_kp_gain. item 9 保留给 0x2C 的 ff_mask 读回
+//   7 friction_model (0/1/2) / 8 fric_v2_eps / 11 drag_db / 17 wall_fw_kd / 18 hold_kp_gain
+//   item 9 保留给 0x2C 的 ff_mask 读回
+// [固件 1.11.0] 12 (drag_kd_margin) 与 13..16 (zg_vel_thr/zg_engage_*) **已删除**。
+// [固件 1.12.0] item 10 (全局 drag_gain) **已删除**, 改为 0x26 item16 逐关节写入。
+// 精确可写集 (1.12.3): 1..8、11、17、18。
 inline constexpr uint8_t CMD_SET_FF_SCALAR = 0x28;
 inline constexpr uint8_t CMD_FF_PRESET = 0x31;         // u8: 0 全关 / 1 出厂 / 2 全开
 // [readback 0x2B/0x2C] 参数读回 (镜像写口, 纯读)
@@ -92,6 +96,10 @@ inline constexpr uint8_t CMD_LOG_READ = 0x2E;          // u32 offset_byte LE -> 
 // 双 ID: 下行 CMD_KIN_BENCH 与上行 RSP_JOINT_PARAM 同为 0x49 (固件 usb_cmd.h)。
 // 收发方向不同, 故靠方向区分, 不可用单张 ID 表查。
 inline constexpr uint8_t CMD_KIN_BENCH = 0x49;
+// [1.12.3] 故障详情按需查询 (空载荷) -> RSP_FAULT(0x51)。
+// 状态帧布局**不变** (7J=153B): flags bit11 = 1 时才发本命令, 原因从这里读。
+// 这是固件兼容性策略的落点 —— 新能力只能走请求-应答, 不得扩既有状态帧。
+inline constexpr uint8_t CMD_GET_FAULT = 0x51;
 inline constexpr uint8_t CMD_GET_STATUS = 0x40;
 inline constexpr uint8_t CMD_GET_FIRMWARE = 0x41;
 inline constexpr uint8_t CMD_GET_IK = 0x42;
@@ -141,6 +149,11 @@ inline constexpr uint8_t RSP_CART_PLAN = 0x4E;
 inline constexpr uint8_t RSP_LICENSE = 0x4F;
 // [授权] 本版无生产者 —— 激活成功回的是 ACK{0x3F}, 故固件里没有任何代码会发出 0x50。
 inline constexpr uint8_t RSP_ACTIVATE = 0x50;
+// [1.12.3] CMD_GET_FAULT(0x51) 的应答 —— 7J = 13B:
+//   fault_tick u32 LE + fault_cause u8 + reason[N] u8 + drop_hold_reason u8。
+// ⚠ 载荷里**没有**冗余的 RSP id —— 与 RSP_STATUS 同惯例 (RSP_FF_VEC 自带首字节 id
+//   是历史特例)。按 RSP_FF_VEC 的偏移解析会整体错 1 字节 (真机实测)。
+inline constexpr uint8_t RSP_FAULT = 0x51;
 inline constexpr uint8_t RSP_MODEL_PARAM = 0x54;       // [0x54, body_idx, f32[10]] = 42B
 inline constexpr uint8_t RSP_MODEL_JM = 0x55;          // [0x55, f32[7]] = 29B
 inline constexpr uint8_t RSP_MODEL_STATUS = 0x56;      // [0x56, override, mask u16 LE, dirty]
@@ -170,8 +183,28 @@ inline constexpr int MODE_ZERO_G = 7;
 inline constexpr int FLAG_ENABLED_BIT = 9;
 // flags bit10 = 笛卡尔规划/播放进行中 (刻意不放进 FLAG_NAMES, 见 state.hpp)
 inline constexpr int FLAG_CART_BUSY_BIT = 10;
+// [1.12.3] flags bit11 = 有故障详情可查 (joint_fault 或 drop_hold 非 0)。
+// 旧固件恒 0; 旧上位机从不读 bit11 及以上, 故状态帧布局无需改变。
+inline constexpr int FLAG_FAULT_DETAIL_BIT = 11;
 // joint_fault 位图 (u16) 能表达的关节数上限
 inline constexpr int MAX_JOINTS = 16;
+
+// ---- [1.12.3 / error-obs] 故障原因码 (固件 litearm.h) ----
+// 固件**只发码, 不发文本**; 文案由 SDK 侧 (errors.hpp 的 fault_reason_text) 解析。
+// 0 = 该轴未锁存。不变量: reason[i] != 0 <=> joint_fault 第 i 位为 1。
+inline constexpr uint8_t FAULT_R_NONE = 0;
+inline constexpr uint8_t FAULT_R_FB_STALE = 1;     // 该轴 CAN 反馈丢失 (>80ms 无帧, 使能态)
+inline constexpr uint8_t FAULT_R_POS_LIMIT = 2;    // 位置越软限位 (>q_max+0.05 或 <q_min-0.05)
+inline constexpr uint8_t FAULT_R_OVERSPEED = 3;    // 超速 (|dq| > 1.5*vel_max)
+inline constexpr uint8_t FAULT_R_MOTOR_ERR = 4;    // 电机自保护失能 (err != 1 连续 20 拍)
+inline constexpr uint8_t FAULT_R_TEMP = 5;         // MOS/线圈过温
+inline constexpr uint8_t FAULT_R_FOLLOW_ERR = 6;   // 跟随误差超限 (|q-q_ref| > following_error)
+inline constexpr uint8_t FAULT_R_NONFINITE = 7;    // 反馈非有限值 (NaN/Inf)
+
+// ---- [1.12.3 / error-obs] 整臂掉线刚性持位 (drop_hold) 的首次原因 ----
+inline constexpr uint8_t DROP_R_NONE = 0;
+inline constexpr uint8_t DROP_R_FB_STALE = 1;      // 该轴 CAN 反馈丢失
+inline constexpr uint8_t DROP_R_MOTOR_ERR = 2;     // 电机自保护失能
 
 const char* mode_name(int mode);
 const char* flag_name(int bit);
@@ -281,7 +314,9 @@ struct StatusDecoded {
 /// 状态帧 -> StatusDecoded; 非法返回 nullopt。
 /// 兼容两种布局 (尾部 u16 joint_fault 为固件 1.5.0 起新增):
 ///   4+21N  固件 <=1.4.x (无 joint_fault, 视为 0)
-///   6+21N  固件 >=1.5.0 (7J=153B)
+///   6+21N  固件 >=1.5.0 (7J=153B; 1.12.3 起冻结在这一布局)
+/// ⚠ 1.12.3 的固化策略是"状态帧布局冻结, 新能力走请求-应答" (故障详情走
+///   CMD_GET_FAULT 0x51) —— 不要扩状态帧。
 /// ⚠ **N 只收 7**: 1 关节是台架单电机 (1J) 模式, 该模式已弃用 —— 收下它等于让一个
 ///   本 SDK 已不支持的模式悄悄流进来 (状态帧是 `n()` 的来源, 放了它 `ik()` 就会拿
 ///   1 个关节去填 7 轴种子)。见 arm.hpp 对 `-1J` 固件的拒绝。

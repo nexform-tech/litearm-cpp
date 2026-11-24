@@ -46,10 +46,10 @@
 #include "litearm/transport.hpp"
 
 #define LITEARM_VERSION_MAJOR 2
-#define LITEARM_VERSION_MINOR 1
-#define LITEARM_VERSION_PATCH 0
-#define LITEARM_VERSION_STRING "2.1.0"
-#define LITEARM_VERSION_CSTR "2.1.0"
+#define LITEARM_VERSION_MINOR 4
+#define LITEARM_VERSION_PATCH 1
+#define LITEARM_VERSION_STRING "2.4.1"
+#define LITEARM_VERSION_CSTR "2.4.1"
 
 namespace litearm {
 

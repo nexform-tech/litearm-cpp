@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(litearm-cpp VERSION 2.1.0 LANGUAGES CXX)
+project(litearm-cpp VERSION 2.4.1 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # LiteArm STM32 直连后端 —— 薄协议 SDK (C++17, 零外部依赖)

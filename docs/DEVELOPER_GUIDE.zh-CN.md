@@ -62,14 +62,18 @@ CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, 无末异或), 覆盖 [SOF..P
 
 单关节 21B = `q f32 + dq f32 + tau f32 + t_mos f32 + t_coil f32 + err u8`。
 `flags` 的位分配: **bit0..5 = 安全 flag**, **bit6..8 = mode**, **bit9 = enabled**,
-**bit10 = cart_busy** —— 所以 `flag_names` 只看 bit0..bit5 (见 `protocol.cpp` 里那个
-`for (k = 0; k < 6; ++k)`; 把它改大就会让 mode/enabled/cart_busy 一起变成"故障位")。
+**bit10 = cart_busy**, **bit11 = fault_detail_available** —— 所以 `flag_names` 只看
+bit0..bit5 (见 `protocol.cpp` 里那个 `for (k = 0; k < 6; ++k)`; 把它改大就会让
+mode/enabled/cart_busy 一起变成"故障位")。
+
+⚠ **1.12.3 的状态帧冻结在 153B**: 故障原因不放进状态帧, 而是用 **flags bit11 +
+`CMD_GET_FAULT 0x51`** 按需查询。判据是 bit11; 原因从 `Arm::get_fault_detail()` 读。
 
 ⚠ **两个双 ID**: `0x49` (下行 `CMD_KIN_BENCH` / 上行 `RSP_JOINT_PARAM`) 与
 `0x41` (下行 `CMD_GET_FIRMWARE` / 上行 `RSP_DETAIL`, 后者是**死登记**)。
 靠**方向**区分, 不可用单张 ID 表查。
 
-覆盖契约 `command_coverage()` (49 条) 是"固件每条已实现命令都有 SDK 入口"的断言载体,
+覆盖契约 `command_coverage()` (50 条) 是"固件每条已实现命令都有 SDK 入口"的断言载体,
 由 `tests/test_protocol.cpp` 逐条对表钉住。
 
 ### 2.1 分帧器 `FrameReader` (`include/litearm/framing.hpp`)
@@ -312,6 +316,29 @@ LiteArmError                     本包所有错误
 
 第 2/3 档之所以必须带原始码: 固件新增一档错误码时, 这条路径就是**唯一**会让上位机看见
 "这是我没见过的码"的地方。
+
+### 8.1 故障原因 (固件 1.12.3+)
+
+状态帧的 `joint_fault` 只说是**哪个轴**被锁存, 不说是**为什么**。原因走
+`Arm::get_fault_detail()` (`CMD_GET_FAULT 0x51`), 且只在 `RobotState::fault_detail_available()`
+(flags bit11) 为真时调用:
+
+```cpp
+FaultDetail d = arm.get_fault_detail();
+for (auto [axis, reason] : d.fault_reasons())      // 只列 reason != 0 的轴
+    printf("J%d: %s\n", axis + 1, fault_reason_text(reason).c_str());
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `fault_tick` | 最近锁存的控制拍; `0` = 无锁存 |
+| `fault_cause` | 锁存当拍 `flags` 低 6 位快照 (原始位图, 不翻译) |
+| `fault_reason` | 每轴原因码 (`FAULT_R_*`; `0` = 未锁存) |
+| `drop_hold_reason` | 整臂掉线刚性持位原因 (`DROP_R_*`: 0 / 1=CAN 丢失 / 2=电机自保护) |
+
+原因码是**固件原始枚举**, 不含文案; `fault_reason_text()` / `drop_hold_reason_text()`
+负责渲染 (未登记的码不静默, 会带出 `FF-xx`)。1.12.3 只通过 0x51 提供原因,
+`RobotState` 不携带原因字段。
 
 ---
 
