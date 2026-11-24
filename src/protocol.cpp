@@ -18,6 +18,7 @@ const char* const kFlagNames[] = {"FAULT", "WD_TRIPPED", "FB_STALE",
 // 命令覆盖契约 —— 与 Python 侧 _protocol.COMMAND_COVERAGE 逐条一致。
 const std::vector<CommandCoverage> kCoverage = {
     {0x01, "Arm.movej"},
+    {0x51, "Arm.get_fault_detail"},   // [1.12.3] 故障详情按需查询
     {0x07, "Arm.movej_sync"},    {0x02, "Arm.move_p"},
     {0x03, "Arm.move_js"},
     {0x04, "Arm.send_mit"},
@@ -75,6 +76,7 @@ const std::vector<std::pair<uint8_t, uint8_t>> kRspOfCmd = {
     {0x2B, 0x4B},  // GET_FF_VEC       -> RSP_FF_VEC
     {0x2C, 0x4C},  // GET_FF_SCALAR    -> RSP_FF_SCALAR
     {0x2E, 0x4D},  // LOG_READ         -> RSP_LOG_DATA
+    {0x2F, 0x4F},  // GET_LICENSE      -> RSP_LICENSE
     {0x34, 0x54},  // GET_MODEL_PARAM  -> RSP_MODEL_PARAM
     {0x35, 0x55},  // GET_MODEL_JM     -> RSP_MODEL_JM
     {0x38, 0x56},  // GET_MODEL_STATUS -> RSP_MODEL_STATUS
@@ -83,6 +85,7 @@ const std::vector<std::pair<uint8_t, uint8_t>> kRspOfCmd = {
     {0x42, 0x47},  // GET_IK           -> RSP_IK
     {0x43, 0x48},  // GET_TCP          -> RSP_TCP
     {0x49, 0x4A},  // KIN_BENCH        -> RSP_KIN_BENCH
+    {0x51, 0x51},  // GET_FAULT        -> RSP_FAULT
 };
 
 float f32_at(const uint8_t* b, size_t off) {
@@ -252,8 +255,15 @@ std::optional<StatusDecoded> decode_status(const uint8_t* payload, size_t len) {
     //   种子恒需 7 轴, 那时只能靠兜底映射硬凑; 干脆在入口就拒掉。
     if (n != 7) return std::nullopt;
     const size_t tail = len - 4 - n * 21;
-    if (tail != 0 && tail != 2) return std::nullopt;   // 0 = 旧布局, 2 = joint_fault u16
-    out.joint_fault = (tail == 2) ? read_u16le(payload + 4 + n * 21) : 0;
+    // 0 = 旧布局; 2 = joint_fault u16 (>=1.5.0); 2+n+1 = 1.12.2 的原因尾。
+    const size_t tail_reason = 2 + n + 1;
+    if (tail != 0 && tail != 2 && tail != tail_reason) return std::nullopt;
+    out.joint_fault = (tail >= 2) ? read_u16le(payload + 4 + n * 21) : 0;
+    if (tail == tail_reason) {
+        const size_t off = 4 + n * 21 + 2;
+        out.fault_reason.assign(payload + off, payload + off + n);
+        out.drop_hold_reason = payload[off + n];
+    }
     out.mode = (out.flags >> 6) & 0x7;
     for (int k = 0; k < 6; ++k) {
         if (out.flags & (1u << k)) out.flag_names.push_back(kFlagNames[k]);

@@ -14,6 +14,14 @@ std::vector<int> RobotState::fault_axes() const {
     return out;
 }
 
+std::vector<std::pair<int, int>> RobotState::fault_reasons() const {
+    std::vector<std::pair<int, int>> out;
+    for (size_t i = 0; i < fault_reason.size(); ++i) {
+        if (fault_reason[i] != 0) out.emplace_back(int(i), int(fault_reason[i]));
+    }
+    return out;
+}
+
 std::vector<double> RobotState::q() const {
     std::vector<double> out;
     out.reserve(joints.size());
@@ -74,6 +82,8 @@ RobotState decode_state(const std::vector<uint8_t>& payload) {
     for (const char* nm : dec->flag_names) st.flag_names.emplace_back(nm);
     st.seq = dec->seq;
     st.joint_fault = dec->joint_fault;
+    st.fault_reason = dec->fault_reason;
+    st.drop_hold_reason = dec->drop_hold_reason;
     st.joints.reserve(dec->joints.size());
     for (const auto& j : dec->joints) {
         JointState js;

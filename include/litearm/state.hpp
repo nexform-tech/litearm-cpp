@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "litearm/protocol.hpp"
@@ -28,6 +29,12 @@ struct RobotState {
     uint16_t seq = 0;
     std::vector<JointState> joints;
     uint16_t joint_fault = 0;   // 固件 G7 断轴位图 (1.5.0 起上报; 旧布局恒 0)
+    /// 每轴首次锁存原因 (FAULT_R_*; 0 = 未锁存)。**只有固件 1.12.2 的 161B 帧**
+    /// 携带; 1.12.3 起状态帧回到 153B, 原因改走 `Arm::get_fault_detail()` (0x51)。
+    /// 1.12.3 上恒为空 —— 空**不表示**"未锁存"; 判据是 `fault_detail_available()`。
+    std::vector<uint8_t> fault_reason;
+    /// 整臂掉线刚性持位的首次原因 (DROP_R_*), 旧固件与 1.12.3 恒 0。
+    uint8_t drop_hold_reason = 0;
 
     int n() const { return int(joints.size()); }
 
@@ -45,13 +52,29 @@ struct RobotState {
     /// 固件已断轴(失能)的关节号, 0 基 (如 {1, 3} = J2/J4)。
     std::vector<int> fault_axes() const;
 
+    /// 已锁存轴的 `(关节号, 原因码)`, 0 基。**只有 1.12.2 的 161B 帧会填**;
+    /// 1.12.3 起恒为空 —— 原因请用 `Arm::get_fault_detail()`。
+    /// 原因码是固件原始枚举 (FAULT_R_*), 不含文案; 与 fault_axes() 的区别只是多带
+    /// "为什么"。
+    std::vector<std::pair<int, int>> fault_reasons() const;
+
+    /// flags bit11: 固件 1.12.3 起表示"可用 get_fault_detail() 查原因"。
+    /// 旧固件恒 false。注意它说的是"**可查**", 不是"真的有故障"。
+    bool fault_detail_available() const {
+        return (flags & (1u << proto::FLAG_FAULT_DETAIL_BIT)) != 0;
+    }
+
     std::vector<double> q() const;
     std::vector<double> dq() const;
     std::vector<double> tau() const;
 
     /// 推断值, 不是读到的位 —— 掉线刚性持位锁存 (固件 g_arm.drop_hold) 是否可能在生效。
     ///
-    /// 为什么只能是推断: 固件不上报这个量 —— 状态帧里没有它的位, 它也没有自己的
+    /// ⚠ **固件 1.12.3 起不需要推断**: flags bit11 (fault_detail_available()) 为真时,
+    ///   用 `Arm::get_fault_detail()` 的 `drop_hold_reason` (DROP_R_*) 直接得到
+    ///   0/1/2。本属性保留给**旧固件** (bit11 恒 false、没有 0x51 查询)。
+    ///
+    /// 为什么在旧固件上只能是推断: 固件不上报这个量 —— 状态帧里没有它的位, 它也没有自己的
     /// ARM_FLAG_*, 固件里 drop_hold 只出现在门禁处, 没有任何上报路径。SDK 侧唯一能拿到的
     /// 是固件自己写下的一条单向蕴含:
     ///     "ENABLE 门禁无需另设 —— drop_hold 为真时 joint_fault 必非 0"

@@ -69,19 +69,26 @@ refuses a firmware whose version variant is not `7J`):
 | --- | --- | --- |
 | `4 + 21N` | ≤ 1.4.x | 151 |
 | `6 + 21N` | ≥ 1.5.0 | 153 |
+| `6 + 21N + 8` | **1.12.2 only** | 161 |
 
 One joint is 21 B = `q f32 + dq f32 + tau f32 + t_mos f32 + t_coil f32 + err u8`.
 Bit allocation in `flags`: **bit0..5 = safety flags**, **bit6..8 = mode**, **bit9 = enabled**,
-**bit10 = cart_busy** — so `flag_names` looks only at bit0..bit5 (see the
-`for (k = 0; k < 6; ++k)` in `protocol.cpp`; raising that bound would turn mode/enabled/cart_busy
-into "fault bits" as well).
+**bit10 = cart_busy**, **bit11 = fault_detail_available** — so `flag_names` looks only at
+bit0..bit5 (see the `for (k = 0; k < 6; ++k)` in `protocol.cpp`; raising that bound would turn
+mode/enabled/cart_busy into "fault bits" as well).
+
+**Caution:** **1.12.3 froze the status frame back at 153 B.** 1.12.2 had appended the per-axis
+reason codes (`fault_reason[N]`) and `drop_hold_reason`; 1.12.3 reverted that and moved the
+details to **flags bit11 + `CMD_GET_FAULT 0x51`**, queried on demand. `decode_status` still
+accepts 161 B (field devices on 1.12.2), but on 1.12.3 `RobotState::fault_reason` is always
+empty — empty does **not** mean "not latched"; the criterion is bit11.
 
 **Caution:** two IDs are dual-purpose: `0x49` (downlink `CMD_KIN_BENCH` / uplink
 `RSP_JOINT_PARAM`) and `0x41` (downlink `CMD_GET_FIRMWARE` / uplink `RSP_DETAIL`, the latter being
 a **dead registration**). You tell them apart by **direction**; a single ID table cannot look them
 up.
 
-The coverage contract `command_coverage()` (49 entries) is the carrier for the assertion that
+The coverage contract `command_coverage()` (50 entries) is the carrier for the assertion that
 "every command the firmware implements has an SDK entry point"; `tests/test_protocol.cpp` pins it
 against the table entry by entry.
 
@@ -318,6 +325,30 @@ lookup:
 
 Why tiers 2 and 3 must carry the raw code: when the firmware adds a new error code, this path is
 the **only** place where the host will see "this is a code I have not seen before".
+
+### 8.1 Fault reasons (firmware 1.12.3+)
+
+The status frame's `joint_fault` tells you **which axis** is latched, not **why**. The reason
+comes from `Arm::get_fault_detail()` (`CMD_GET_FAULT 0x51`), and only when
+`RobotState::fault_detail_available()` (flags bit11) is true:
+
+```cpp
+FaultDetail d = arm.get_fault_detail();
+for (auto [axis, reason] : d.fault_reasons())      // only axes with reason != 0
+    printf("J%d: %s\n", axis + 1, fault_reason_text(reason).c_str());
+```
+
+| Field | Meaning |
+| --- | --- |
+| `fault_tick` | Control tick of the most recent latch; `0` = none |
+| `fault_cause` | Snapshot of the low 6 `flags` bits at latch time (raw bitmap, not translated) |
+| `fault_reason` | Per-axis reason code (`FAULT_R_*`; `0` = not latched) |
+| `drop_hold_reason` | Whole-arm dropout rigid-hold reason (`DROP_R_*`: 0 / 1 = CAN lost / 2 = motor self-protection) |
+
+The codes are the **firmware's raw enums**, not text; `fault_reason_text()` /
+`drop_hold_reason_text()` render them (an unregistered code is not silenced — it carries `FF-xx`).
+1.12.2 was an intermediate release: the reasons rode the 161 B status frame and are available via
+`RobotState::fault_reasons()`; from 1.12.3 that field is always empty and 0x51 is the only path.
 
 ---
 

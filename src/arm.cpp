@@ -75,6 +75,18 @@ std::string gnum(double v) {
 }  // namespace
 
 // ===========================================================================
+// FaultDetail
+// ===========================================================================
+
+std::vector<std::pair<int, int>> FaultDetail::fault_reasons() const {
+    std::vector<std::pair<int, int>> out;
+    for (size_t i = 0; i < fault_reason.size(); ++i) {
+        if (fault_reason[i] != 0) out.emplace_back(int(i), int(fault_reason[i]));
+    }
+    return out;
+}
+
+// ===========================================================================
 // LicenseInfo
 // ===========================================================================
 
@@ -1298,24 +1310,24 @@ void Arm::ff_preset(int preset) {
 }
 
 const std::vector<std::pair<int, std::string>>& Arm::ff_vec_items() {
+    // 已知项对照表 (1.12.3) —— 12..14 已删, 16 是 1.12.0 新增的逐关节 drag_gain。
+    // ⚠ 只作文档, 不参与校验: 见头文件里"不是客户端白名单"的说明。
     static const std::vector<std::pair<int, std::string>> kItems = {
         {1, "friction"},   {2, "ki"},          {3, "i_max"},
         {4, "wall_stiff"}, {5, "wall_damp"},   {6, "wall_tau_max"},
         {7, "gravity_scale"}, {8, "inertia_scale"},
         {9, "friction_v"},  {10, "friction_fc0"}, {11, "friction_fc1"},
-        {12, "zg_kp"},      {13, "zg_kd"},     {14, "zg_damping"},
-        {15, "kd_extra"}};
+        {15, "kd_extra"},   {16, "drag_gain"}};
     return kItems;
 }
 
 const std::vector<std::pair<int, std::string>>& Arm::ff_scalar_items() {
+    // 已知项对照表 (1.12.3) —— item 10 (全局 drag_gain) 与 12..16 已删。
     static const std::vector<std::pair<int, std::string>> kItems = {
         {1, "fric_db"},    {2, "wall_margin"},   {3, "friction_slew"},
         {4, "payload_mass"}, {5, "payload_com"}, {6, "gravity"},
         {7, "friction_model"}, {8, "fric_v2_eps"},
-        {10, "drag_gain"}, {11, "drag_db"},      {12, "drag_kd_margin"},
-        {13, "zg_vel_thr"}, {14, "zg_engage_sec"}, {15, "zg_engage_kp"},
-        {16, "zg_engage_kd"}, {17, "wall_fw_kd"}, {18, "hold_kp_gain"}};
+        {11, "drag_db"}, {17, "wall_fw_kd"}, {18, "hold_kp_gain"}};
     return kItems;
 }
 
@@ -1325,17 +1337,23 @@ const std::vector<std::pair<int, std::string>>& Arm::ff_scalar_ro_items() {
 }
 
 namespace {
-bool in_items(const std::vector<std::pair<int, std::string>>& items, int item) {
-    for (const auto& kv : items) {
-        if (kv.first == item) return true;
+// item 只做 u8 范围校验 —— **能力判定交给固件**。
+//
+// 固件的 item 集合随版本增减 (1.11.0 删 12..14、1.12.0 删 10 并加 16), 客户端若维护
+// 白名单, 要么挡住新参数, 要么对老固件放行不存在的 item。后者本来就没问题: 固件回
+// ERR{cmd,0x02}, SDK 抛 CommandRejectedError。
+void check_ff_item(int item) {
+    if (item < 1 || item > 255) {
+        throw InvalidCommandError("item 需为 1..255 的整数 (给的是 " +
+                                  std::to_string(item) + ")");
     }
-    return false;
 }
 }  // namespace
 
 void Arm::set_ff_vec(int item, const std::vector<double>& values) {
-    if (!in_items(ff_vec_items(), item) || values.size() != 7) {
-        throw InvalidCommandError("set_ff_vec item∈1..15 且需 7 值");
+    check_ff_item(item);
+    if (values.size() != 7) {
+        throw InvalidCommandError("set_ff_vec 需 7 值");
     }
     std::vector<uint8_t> payload{uint8_t(item)};
     const auto vals = proto::pack_f32s(values);
@@ -1344,8 +1362,9 @@ void Arm::set_ff_vec(int item, const std::vector<double>& values) {
 }
 
 void Arm::set_ff_scalar(int item, int sub, double value) {
-    if (!in_items(ff_scalar_items(), item) || sub < 0 || sub > 2) {
-        throw InvalidCommandError("set_ff_scalar item∈{1..8,10..18}, sub∈0..2");
+    check_ff_item(item);
+    if (sub < 0 || sub > 2) {
+        throw InvalidCommandError("set_ff_scalar sub∈0..2");
     }
     std::vector<uint8_t> payload{uint8_t(item), uint8_t(sub)};
     const auto v = proto::pack_f32le(value);
@@ -1355,9 +1374,7 @@ void Arm::set_ff_scalar(int item, int sub, double value) {
 }
 
 Msg<std::vector<double>> Arm::get_ff_vec(int item, double timeout) {
-    if (!in_items(ff_vec_items(), item)) {
-        throw InvalidCommandError("get_ff_vec item∈1..15");
-    }
+    check_ff_item(item);
     Ack& a = require();
     const uint8_t p = uint8_t(item);
     write_query(proto::CMD_GET_FF_VEC, &p, 1);
@@ -1372,9 +1389,7 @@ Msg<std::vector<double>> Arm::get_ff_vec(int item, double timeout) {
 }
 
 Msg<double> Arm::get_ff_scalar(int item, int sub, double timeout) {
-    if (!in_items(ff_scalar_items(), item) && !in_items(ff_scalar_ro_items(), item)) {
-        throw InvalidCommandError("get_ff_scalar item∈{1..18}");
-    }
+    check_ff_item(item);
     if (sub < 0 || sub > 2) throw InvalidCommandError("get_ff_scalar sub∈0..2");
     Ack& a = require();
     const uint8_t p[2] = {uint8_t(item), uint8_t(sub)};
@@ -1400,6 +1415,15 @@ void Arm::set_gravity_scale(const std::vector<double>& gs) {
 void Arm::set_inertia_scale(const std::vector<double>& isc) {
     if (isc.size() != 7) throw InvalidCommandError("inertia_scale 需 7 值");
     set_ff_vec(8, isc);
+}
+
+void Arm::set_drag_gain(const std::vector<double>& gains) {
+    if (gains.size() != 7) throw InvalidCommandError("drag_gain 需 7 值");
+    set_ff_vec(16, gains);
+}
+
+Msg<std::vector<double>> Arm::get_drag_gain(double timeout) {
+    return get_ff_vec(16, timeout);
 }
 
 void Arm::set_payload(double mass, const std::array<double, 3>& com) {
@@ -1457,6 +1481,28 @@ LicenseInfo Arm::license(double timeout) {
     write_query(proto::CMD_GET_LICENSE);
     const auto r = a.expect(proto::RSP_LICENSE, timeout, "get_license");
     return LicenseInfo::decode(r.payload);
+}
+
+FaultDetail Arm::get_fault_detail(double timeout) {
+    Ack& a = require();
+    write_query(proto::CMD_GET_FAULT);
+    const auto r = a.expect(proto::RSP_FAULT, timeout, "get_fault_detail", true,
+                            proto::CMD_GET_FAULT);
+    const size_t n = size_t(n_);
+    // 固件 payload **不含** RSP id (与 RSP_STATUS 一致; RSP_FF_VEC 那种自带 id 是历史
+    // 特例)。偏移: fault_tick u32 LE + fault_cause u8 + reason[n] + drop u8
+    // (7J = 13B)。按 RSP_FF_VEC 的偏移解析会整体错 1 字节。
+    const size_t need = 5 + n + 1;
+    if (r.payload.size() < need) {
+        throw TransportError("RSP_FAULT 帧短 (" + std::to_string(r.payload.size()) +
+                             "B, 期望 >= " + std::to_string(need) + "B)");
+    }
+    FaultDetail d;
+    d.fault_tick = proto::read_u32le(r.payload, 0);
+    d.fault_cause = r.payload[4];
+    d.fault_reason.assign(r.payload.begin() + 5, r.payload.begin() + 5 + n);
+    d.drop_hold_reason = r.payload[5 + n];
+    return d;
 }
 
 void Arm::activate(uint32_t cust_id, uint32_t issued, uint32_t flags, const uint8_t* mac,

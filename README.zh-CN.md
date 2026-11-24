@@ -3,7 +3,7 @@
 LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中间没有服务器、没有中间件。
 轨迹规划、运动学与动力学全部由固件承担, PC 侧只发点、收结果。
 
-本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.1.0 的 C++ 移植:
+本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.4.1 的 C++ 移植:
 同一套线协议、同一套语义、同一套安全判据, 逐条对照移植; 测试同样全离线可跑。
 
 > 接口全景见 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
@@ -231,6 +231,18 @@ arm.get_status_now();                           // 主动要一帧
 arm.ik({0.30, 0.0, 0.35, 3.1416, 0.0, 0.0});    // 位姿 -> q[7]
 ```
 
+故障原因 (固件 1.12.3+): 状态帧只给 flags bit11, 详情走一次请求-应答 ——
+正常运行没有这次往返。旧固件没有 0x51, 会抛 `UnsupportedByFirmwareError`。
+
+```cpp
+if (st && st->fault_detail_available()) {        // flags bit11
+    FaultDetail d = arm.get_fault_detail();      // CMD_GET_FAULT 0x51
+    for (auto [axis, reason] : d.fault_reasons())
+        printf("J%d: %s\n", axis + 1, fault_reason_text(reason).c_str());
+    printf("drop_hold: %s\n", drop_hold_reason_text(d.drop_hold_reason).c_str());
+}
+```
+
 ### 生活 / 安全
 
 ```cpp
@@ -248,6 +260,8 @@ arm.set_gravity_scale({1,1,1,1,1,1,1});
 arm.ff_preset(1);                                       // 0 全关 / 1 出厂 / 2 全开
 double m = arm.get_ff_scalar(4).value;                  // 读回 payload_mass
 arm.get_ff_mask();                                      // ff_mask (0x2C item 9, 只读)
+arm.set_drag_gain({0.6,0.6,0.6,0.6,0.6,0.6,0.6});      // 0x26 item16, 逐关节拖动摩擦 (固件 1.12.0+)
+auto dg = arm.get_drag_gain().value;                    // 读回 7 值
 ```
 
 ### 拖动示教

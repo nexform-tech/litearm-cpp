@@ -5,7 +5,7 @@ serial link**. No server, no middleware. Trajectory planning, kinematics and dyn
 in the firmware; the host only sends waypoints and reads results back.
 
 This repository is the C++ port of
-[litearm-python](https://github.com/nexform-tech/litearm-python) 2.1.0: the same wire
+[litearm-python](https://github.com/nexform-tech/litearm-python) 2.4.1: the same wire
 protocol, the same semantics, the same safety criteria, ported line by line. The test suite
 is likewise fully offline.
 
@@ -247,6 +247,19 @@ arm.get_status_now();                           // ask for a frame on demand
 arm.ik({0.30, 0.0, 0.35, 3.1416, 0.0, 0.0});    // pose -> q[7]
 ```
 
+Fault reasons (firmware 1.12.3+): the status frame only carries flags bit11; the details
+cost one request/response — there is no such round trip during normal operation. Older
+firmware has no 0x51 and throws `UnsupportedByFirmwareError`.
+
+```cpp
+if (st && st->fault_detail_available()) {        // flags bit11
+    FaultDetail d = arm.get_fault_detail();      // CMD_GET_FAULT 0x51
+    for (auto [axis, reason] : d.fault_reasons())
+        printf("J%d: %s\n", axis + 1, fault_reason_text(reason).c_str());
+    printf("drop_hold: %s\n", drop_hold_reason_text(d.drop_hold_reason).c_str());
+}
+```
+
 ### Housekeeping / safety
 
 ```cpp
@@ -264,6 +277,8 @@ arm.set_gravity_scale({1,1,1,1,1,1,1});
 arm.ff_preset(1);                                       // 0 all off / 1 factory / 2 all on
 double m = arm.get_ff_scalar(4).value;                  // read back payload_mass
 arm.get_ff_mask();                                      // ff_mask (0x2C item 9, read-only)
+arm.set_drag_gain({0.6,0.6,0.6,0.6,0.6,0.6,0.6});      // 0x26 item16, per-joint drag (firmware 1.12.0+)
+auto dg = arm.get_drag_gain().value;                    // read back the 7 values
 ```
 
 ### Freedrive (zero gravity)
