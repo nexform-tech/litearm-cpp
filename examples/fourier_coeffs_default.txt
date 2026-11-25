@@ -8,6 +8,9 @@
 #
 # q_j(t) = a0 + sum_{n=1..5} [ a_n*cos(n*w*t) + b_n*sin(n*w*t) ]
 # w = 2*pi/period (period comes from --period, default 24 s).
+# The design period is pinned here; 10_identify refuses a different --period
+# because velocities/accelerations scale as 1/T and 1/T^2.
+# period: 24
 # This file is 10_identify's default excitation; pass --coeffs FILE to use
 # another coefficient file.  Each run captures both segments.
 #

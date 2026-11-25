@@ -2,10 +2,12 @@
 // include/litearm/ident/coefficients.hpp for the text format.
 #include "litearm/ident/coefficients.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -44,6 +46,50 @@ double parse_number(const std::string& token, const std::string& where) {
         throw std::invalid_argument(where + ": \"" + token + "\" is not finite");
     }
     return value;
+}
+
+/// A `# period: <seconds>` comment declares the coefficient design.  Returns
+/// the declared value, or nullopt when the text carries no declaration.
+std::optional<double> declared_period(const std::string& text) {
+    std::optional<double> declared;
+    std::istringstream in(text);
+    std::string line;
+    int line_no = 0;
+    while (std::getline(in, line)) {
+        ++line_no;
+        if (line_no == 1 && line.size() >= 3 &&
+            static_cast<unsigned char>(line[0]) == 0xEF &&
+            static_cast<unsigned char>(line[1]) == 0xBB &&
+            static_cast<unsigned char>(line[2]) == 0xBF) {
+            line.erase(0, 3);  // UTF-8 BOM
+        }
+        const size_t hash = line.find('#');
+        if (hash == std::string::npos) continue;
+        std::string body = trim(line.substr(hash + 1));
+        if (body.rfind("period", 0) != 0) continue;
+        std::string rest = trim(body.substr(6));
+        if (rest.empty() || (rest[0] != ':' && rest[0] != '=')) continue;  // prose
+        rest = trim(rest.substr(1));
+        const std::string where = "external Fourier coefficients: line " +
+                                  std::to_string(line_no) + ": '# period:'";
+        if (rest.empty()) throw std::invalid_argument(where + " needs a value");
+        char* end = nullptr;
+        const double value = std::strtod(rest.c_str(), &end);
+        if (end == rest.c_str() || !trim(std::string(end)).empty() ||
+            !std::isfinite(value) || value <= 0.0) {
+            throw std::invalid_argument(where + " bad value \"" + rest + "\"");
+        }
+        if (declared) {
+            const double tol =
+                1e-9 * std::max(1.0, std::max(std::abs(*declared), std::abs(value)));
+            if (std::abs(*declared - value) > tol) {
+                throw std::invalid_argument(where +
+                                            " conflicts with an earlier declaration");
+            }
+        }
+        declared = value;
+    }
+    return declared;
 }
 
 /// values holds exactly kCoefficientsPerSegment (77) numbers, joint-major:
@@ -96,6 +142,21 @@ void append_values(const std::string& text, const std::string& where,
 std::vector<FourierCoefficients> parse_fourier_coefficients_text(
     const std::string& text, double period) {
     require_period(period);
+
+    // Refuse a period that disagrees with the file's declared design period:
+    // the same coefficients at a different period are a different trajectory.
+    if (const auto declared = declared_period(text)) {
+        const double tol =
+            1e-9 * std::max(1.0, std::max(std::abs(*declared), std::abs(period)));
+        if (std::abs(*declared - period) > tol) {
+            throw std::invalid_argument(
+                "external Fourier coefficients: file declares period=" +
+                std::to_string(*declared) + " s but --period is " +
+                std::to_string(period) +
+                " s; velocities scale as 1/T and accelerations as 1/T^2, so "
+                "the trajectory would not match the coefficient design");
+        }
+    }
 
     std::vector<FourierCoefficients> out;
     std::vector<double> values;

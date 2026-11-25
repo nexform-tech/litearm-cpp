@@ -10,7 +10,8 @@
 // example-10 result; offline replay has no arm, so it still requires it.
 //
 // The firmware payload feedforward is zeroed before a loaded capture (it
-// otherwise contaminates the measured torques); write the result back after.
+// otherwise contaminates the measured torques).  The pre-run payload is
+// restored when the run finishes unless --apply installs the identified one.
 //
 // The pose family is wrist-only: J1 and J3 stay at zero, J2 is fixed at 0.9,
 // J4 at -0.8, and only J5..J7 vary over 20 representative wrist poses, so
@@ -254,6 +255,64 @@ void print_payload_state(Arm& arm) {
         std::printf("firmware payload readback failed: %s\n", e.what());
     }
 }
+
+struct PayloadSnapshot {
+    bool valid = false;
+    double mass = 0.0;
+    Vec3 com{};
+};
+
+PayloadSnapshot read_payload_snapshot(Arm& arm) {
+    PayloadSnapshot s;
+    try {
+        s.mass = arm.get_ff_scalar(4).value;
+        s.com = {arm.get_ff_scalar(5, 0).value, arm.get_ff_scalar(5, 1).value,
+                 arm.get_ff_scalar(5, 2).value};
+        s.valid = std::isfinite(s.mass) && finite3(s.com);
+    } catch (const std::exception& e) {
+        std::printf("WARNING: could not read the current payload (%s); "
+                    "it will not be restored\n", e.what());
+    }
+    return s;
+}
+
+/// Restore the payload that was active before a live run.  The loaded capture
+/// zeros (or bootstraps) the firmware feedforward; unless --apply installs the
+/// identified payload, leaving it changed silently alters the gravity
+/// feedforward.  RAII also covers early returns and exceptions.
+class PayloadRestoreGuard {
+public:
+    explicit PayloadRestoreGuard(Arm& arm)
+        : arm_(arm), before_(read_payload_snapshot(arm)) {}
+    PayloadRestoreGuard(const PayloadRestoreGuard&) = delete;
+    PayloadRestoreGuard& operator=(const PayloadRestoreGuard&) = delete;
+    ~PayloadRestoreGuard() { restore(); }
+
+    /// Keep the payload this run installed (after a successful --apply).
+    void keep_new_payload() { active_ = false; }
+
+    void restore() {
+        if (!active_) return;
+        active_ = false;
+        if (!before_.valid) return;
+        try {
+            arm_.set_payload(before_.mass, before_.com);
+            std::printf("payload restored to the pre-run value: mass=%.4f kg "
+                        "com=[%.4f, %.4f, %.4f]\n",
+                        before_.mass, before_.com[0], before_.com[1],
+                        before_.com[2]);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                         "WARNING: could not restore the previous payload: %s\n",
+                         e.what());
+        }
+    }
+
+private:
+    Arm& arm_;
+    PayloadSnapshot before_;
+    bool active_ = true;
+};
 
 Vec3 read_live_gravity(Arm& arm, const example::Args& args) {
     Vec3 g{0.0, 0.0, -9.81};
@@ -884,6 +943,9 @@ int run_identify_live(Arm& arm, const std::vector<Vec7>& poses,
     if (bootstrap_mass < 0.0) {
         throw InvalidCommandError("--bootstrap-mass must be >= 0");
     }
+    // Snapshot the payload before the sampling changes it; restore it unless
+    // --apply installs the identified value.
+    PayloadRestoreGuard payload_guard(arm);
     if (bootstrap_mass > 0.0) {
         arm.set_payload(bootstrap_mass, bootstrap_com);
         std::printf("bootstrap payload: mass=%.4f com=[%.4f, %.4f, %.4f]\n",
@@ -893,12 +955,12 @@ int run_identify_live(Arm& arm, const std::vector<Vec7>& poses,
                     "biases the identified payload (clear it for a clean fit)\n");
     } else {
         // Any payload already in the firmware feedforward contaminates the
-        // measured torques.  Zero it for the identification; write the result
-        // back afterwards.
+        // measured torques.  Zero it for the identification; the guard restores
+        // it afterwards unless --apply installs the identified payload.
         const double fw_mass = arm.get_ff_scalar(4).value;
         if (std::abs(fw_mass) > 1e-6) {
             std::printf("WARNING: firmware payload mass %.4f cleared for "
-                        "identification (write the result back afterwards)\n",
+                        "identification (restored unless --apply)\n",
                         fw_mass);
         }
         arm.set_payload(0.0, {0.0, 0.0, 0.0});
@@ -942,7 +1004,12 @@ int run_identify_live(Arm& arm, const std::vector<Vec7>& poses,
     print_result(r);
     write_result_yaml(r, loaded, args.str("out", "ident_result"),
                       timestamp_suffix(), model_source, baseline_path, loaded_path);
-    if (args.has("apply")) apply_payload(arm, r);
+    if (args.has("apply")) {
+        apply_payload(arm, r);
+        payload_guard.keep_new_payload();
+    } else {
+        payload_guard.restore();
+    }
     std::printf("arm remains enabled and holding\n");
     return 0;
 }
@@ -1006,7 +1073,8 @@ int main(int argc, char** argv) {
         "  --baseline-csv FILE      offline baseline capture\n"
         "  --capture-loaded FILE    write the live loaded capture here\n"
         "  --out DIR                output directory (default ident_result)\n"
-        "  --apply                  write the result to the firmware (RAM only)\n"
+        "  --apply                  write the result to the firmware (RAM only);\n"
+        "                           without it the pre-run payload is restored\n"
         "  --pose-count N           first N poses to use, 3..20 (default all 20)\n"
         "  --pose-set LIST          explicit 1-based pose list, e.g. 1,10,20\n"
         "  --samples N              static samples per pose (default 80)\n"

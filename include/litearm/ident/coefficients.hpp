@@ -10,6 +10,12 @@
 //   q_j(t) = a0 + sum_{n=1..5} [ a_n*cos(n*w*t) + b_n*sin(n*w*t) ],
 //   w = 2*pi/period.
 //
+// An optional `# period: <seconds>` comment pins the design period.  Parsing
+// with a different `period` argument is rejected: velocities scale as 1/T and
+// accelerations as 1/T^2, so the recorded trajectory would not match the
+// coefficient design.  Files without the comment keep the caller's period
+// (backward compatible).
+//
 // FourierCoefficients stores the sin coefficient in `a` and the cos
 // coefficient in `b` (see FourierTrajectory::eval), so a_n maps to
 // b[n-1][j] and b_n maps to a[n-1][j].  kCoefficientsPerSegment = 77.

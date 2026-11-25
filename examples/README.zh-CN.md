@@ -23,7 +23,7 @@ cd ..
 | `07_vel_jitter_trace` | 双通道逐拍采集：100 Hz 状态流 + 300 Hz 固件日志 | **是** |
 | `08_zero_g_drag` | 拖动示教：设置末端负载（夹爪）→ `zero_g` → 手动拖动 → 退出前检查软限位 | **是** |
 | `09_ik_accuracy` | 固件 IK 精度扫描：FK 模型自检 vs `get_tcp`、Halton 关节空间采样、PC 侧 FK 复算、不可达位姿拒绝、`--dump` CSV | 否（只读） |
-| `10_identify` | 控制器 Craig/MDH 连杆系（`DH/litearm_dh.urdf`）下的动力学辨识：默认从 `examples/SN.yaml` 固定 70 个惯性参数，只辨识摩擦/电枢；`--full-inertia` 解全部 96 参数。离线 CSV 求解（`--input-csv`），默认两段激励 `examples/fourier_coeffs_default.txt` 24 s，或其他系数文件（`--coeffs`/`--coeffs-inline`，每段 77 个，按关节限位拟合且不修改文件，不做末端高度/奇异处理），SN 导出，可选 `--write-model`（需要 `LITEARM_BUILD_IDENT=ON`） | 采集/写回时 **是** |
+| `10_identify` | 控制器 Craig/MDH 连杆系（`DH/litearm_dh.urdf`）下的动力学辨识：默认从 `examples/SN.yaml` 固定 70 个惯性参数，只辨识摩擦/电枢；`--full-inertia` 解全部 96 参数。离线 CSV 求解（`--input-csv`），默认两段激励 `examples/fourier_coeffs_default.txt` 24 s，或其他系数文件（`--coeffs`/`--coeffs-inline`，每段 77 个，按关节限位拟合且不修改文件，不做末端高度/奇异处理），SN 导出，可选 `--write-model` / `--write-jm` / `--write-friction` 写回（需要 `LITEARM_BUILD_IDENT=ON`） | 采集/写回时 **是** |
 | `11_identify_payload` | 从静态重力位姿辨识末端点质量负载（质量 + 质心），使用示例 10 的 DH 系模型：空载基线（`--capture-baseline`）、差分求解（`--baseline`）、绝对求解（`--absolute`）、离线 CSV 回放、可选 RAM-only `--apply`（需要 `LITEARM_BUILD_IDENT=ON`） | 采集/应用时 **是** |
 
 ## 示例 11 快速开始
@@ -54,7 +54,7 @@ cd ..
 `payload_result_<stamp>.yaml`，以及 `--capture-baseline` 指定路径的基线 CSV。
 
 - 必须加 `--go` 才会运动；不加只连接并打印规划。
-- 加载采集前会清掉固件负载前馈。若不加 `--apply`，运行结束后固件负载保持 0。
+- 加载采集前会清掉固件负载前馈。若不加 `--apply`，运行结束时会恢复运行前的负载。
 - 基线与加载运行必须使用相同的 `--pose-count` / `--pose-set`。
 - 示例结束时会保持使能并停在末位姿；请自行回零或失能。
 - 默认速度 0.10；第一次可传 `--speed 0.05` 更慢。
@@ -77,8 +77,8 @@ cd ..
 - `07_vel_jitter_trace`：`--dist` `--dur` `--dir` `--tag` `--ff-mask`
 - `08_zero_g_drag`：`--seconds`（时间上限，0 = 不限）`--payload`（kg）`--com X,Y,Z`（完整 ee 法兰质心，推荐）或 `--comz`（只给 z）。回车或 ^C 结束。
 - `09_ik_accuracy`：`--n`（样本数）`--seed zero|target|prev` `--margin`（采样占关节范围的比例）`--dump FILE`（逐样本 CSV）`--unreach K`（不可达位姿拒绝探测）`--timeout` `--frame ee|j7` `--j6axis 1|-1`（强制某个模型变体，而不是自检选择）。
-- `10_identify`：`--input-csv FILE`（离线求解，无机械臂）、`--cycles N`、`--period S`（默认 24）、`--send-hz H`、`--kp`/`--kd` 列表、`--coeffs FILE` / `--coeffs-inline LIST`（每段 77 个数，按关节优先 `a0,a1,b1,...,a5,b5`；按关节做中心平移 + 统一谐波缩放拟合到限位，不修改输入文件；不做末端高度/奇异处理；默认文件 `examples/fourier_coeffs_default.txt`）、`--fixed-model FILE`（默认 `examples/SN.yaml`；保留其 70 个惯性参数，只解摩擦/电枢）、`--full-inertia`（改为解全部 96 参数）、`--allow-nonphysical`（接受/导出非物理惯性块）、`--sn-template FILE`（默认：固定模型文件；结果写成 SN `dynamics_parameters` 配置）、`--physical-mass`（`--full-inertia` 模式下用 kg 质量而不是 m=1 的单位质量基准）、`--urdf`/`--urdf-sha256`（在 SN 头记录模型来源；使用 `DH/litearm_dh.urdf`）、`--write-model`、`--write-jm`、`--rollback-gravity`，以及 `--help` 里的 ridge/正则开关。需要 `-DLITEARM_BUILD_IDENT=ON`。
-- `11_identify_payload`：`--capture-baseline FILE`（负载已物理拆下）、`--baseline FILE`（差分；推荐）、`--absolute`（无基线；使用固件 bank）、`--loaded-csv FILE` / `--baseline-csv FILE`（离线回放）、`--load-params FILE`（空臂模型覆盖；默认固件模型 bank，离线回放必需）、`--capture-loaded FILE`、`--apply`（仅 RAM）、`--pose-count N`（3..20，默认 20）、`--pose-set LIST`（显式 1 基位姿，例如 `1,10,20`）、`--samples N`、`--sample-interval S`、`--speed S`、`--max-pose-error RAD`、`--max-payload-kg KG`、`--max-com-radius M`、`--bootstrap-mass`/`--bootstrap-com`、`--condition-max`、`--huber-iterations`。需要 `-DLITEARM_BUILD_IDENT=ON`。
+- `10_identify`：`--input-csv FILE`（离线求解，无机械臂）、`--cycles N`、`--period S`（默认 24；必须与系数文件中的 `# period:` 声明一致）、`--send-hz H`、`--kp`/`--kd` 列表、`--coeffs FILE` / `--coeffs-inline LIST`（每段 77 个数，按关节优先 `a0,a1,b1,...,a5,b5`；按关节做中心平移 + 统一谐波缩放拟合到限位，不修改输入文件；不做末端高度/奇异处理；默认文件 `examples/fourier_coeffs_default.txt`）、`--fixed-model FILE`（默认 `examples/SN.yaml`；保留其 70 个惯性参数，只解摩擦/电枢）、`--full-inertia`（改为解全部 96 参数）、`--allow-nonphysical`（接受/导出/写回非物理惯性块）、`--sn-template FILE`（默认：固定模型文件；结果写成 SN `dynamics_parameters` 配置）、`--physical-mass`（`--full-inertia` 模式下用 kg 质量而不是 m=1 的单位质量基准）、`--urdf`/`--urdf-sha256`（在 SN 头记录模型来源；使用 `DH/litearm_dh.urdf`）、`--write-model`、`--write-jm`、`--write-friction`（0x26 item 9/10/11）、`--rollback-gravity`，以及 `--help` 里的 ridge/正则开关。需要 `-DLITEARM_BUILD_IDENT=ON`。
+- `11_identify_payload`：`--capture-baseline FILE`（负载已物理拆下）、`--baseline FILE`（差分；推荐）、`--absolute`（无基线；使用固件 bank）、`--loaded-csv FILE` / `--baseline-csv FILE`（离线回放）、`--load-params FILE`（空臂模型覆盖；默认固件模型 bank，离线回放必需）、`--capture-loaded FILE`、`--apply`（仅 RAM；不加时恢复运行前负载）、`--pose-count N`（3..20，默认 20）、`--pose-set LIST`（显式 1 基位姿，例如 `1,10,20`）、`--samples N`、`--sample-interval S`、`--speed S`、`--max-pose-error RAD`、`--max-payload-kg KG`、`--max-com-radius M`、`--bootstrap-mass`/`--bootstrap-com`、`--condition-max`、`--huber-iterations`。需要 `-DLITEARM_BUILD_IDENT=ON`。
 
 ## 安全约定
 

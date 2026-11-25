@@ -58,7 +58,8 @@ The host model uses the **controller's Craig/MDH link frames** rebuilt in
 (`axis = s_i * z`), and the fixed `ee_link` is merged into link 7. Consequently
 `phi_flat` is expressed directly in the DH link frames and can be compared
 with `DH/dh_params.yaml` without any per-link conversion; the same `phi` is
-what `phi_to_body10` / `--write-model` send to the firmware. `cad_phi()` is the
+what `phi_to_body10` converts to the firmware body10 layout (and what
+`--write-model` sends). `cad_phi()` is the
 vendor CAD inertia re-expressed in those DH frames, and is used only as the
 solver prior. The 70-column regressor is built analytically from the 10 basis
 parameters; `rnea()` is an independent recursive Newton-Euler implementation
@@ -89,11 +90,13 @@ torques do not change. This is required because `jm1/jm2` are structurally
 collinear with link1/link2 `Izz` and are folded into it; the identified
 tensor can therefore look like a thin rod and violate the triangle inequality.
 `identified_yaml`, `sn_template_yaml`, and `write_model` re-check the result
-and refuse non-finite or non-physical parameters. The fixed-inertia path is the
-explicit exception: it keeps the supplied bank, marks the output header with
-`# inertia: fixed from ...`, and permits export/write-back of that bank.
-`write_model` performs the check before `disable()` in full-inertia mode, so a
-bad file never drops a holding arm.
+and refuse non-finite or non-physical parameters unless the caller opts out.
+The fixed-inertia path is the explicit exception: it keeps the supplied bank,
+marks the output header with `# inertia: fixed from ...`, and permits
+export/write-back of that bank (`write_model`'s `allow_nonphysical`, which
+`10_identify` enables automatically for fixed-inertia outputs). Without that
+opt-out `write_model` performs the check before `disable()`, so a bad file never
+drops a holding arm.
 
 Physical validity is a host-side condition. The firmware's `model.commit`
 may impose additional range checks; see `docs/UNVERIFIED_REGISTER.md`.
@@ -191,6 +194,10 @@ File rules:
 
 - numbers separated by whitespace and/or commas; `#` starts a comment; a
   UTF-8 BOM is ignored;
+- an optional `# period: <seconds>` comment pins the design period. A parse
+  with a different `--period` is refused, and a malformed or conflicting
+  declaration is rejected. Files without the comment keep the caller's period
+  (backward compatible); the shipped default file declares 24 s;
 - exactly 77 values per segment; segments are separated by a line containing
   only `---`, or by a blank line once the current segment already holds 77
   values; blank lines inside a partially filled segment are ignored;
@@ -209,8 +216,9 @@ inside the slightly wider URDF limits; the applied shift/scale is printed per
 segment. There is no ee-height lift and no `sigma_min` rejection; the plan
 prints `z_min` and `sigma` for information only. The SN header records the
 fitted trajectory. `--period` must match the period used to design the numbers
-(velocity and acceleration scale as `1/T` and `1/T²`; the shipped file is
-designed for the 24 s default). `capture_center` aborts on non-finite
+(velocity and acceleration scale as `1/T` and `1/T²`); the parser enforces the
+file's `# period:` declaration and refuses a mismatch, so the shipped 24 s file
+cannot be run at, say, `--period 48`. `capture_center` aborts on non-finite
 commands, commands outside the firmware joint limits, or excessive tracking
 error — that is the runtime hardware guard, not trajectory design.
 
@@ -284,6 +292,19 @@ commits `0x0FE` or `0x2FE`, reads the model back, and optionally compares
 `get_gravity(q)` against the host RNEA. `save_params()` is **never** called, so
 a reboot restores the flash model. Support the arm before committing.
 
+`--write-jm` adds jm to the same commit. A jm-only model commit is rejected by
+the firmware's zero-model sentinel (`ERR{0x32,0x02}`) because `stage_begin_jm()`
+does not seed the body group; use `arm.model().commit_jm(jm)`, which re-stages
+the current bodies first and commits `0x2FE`. `write_model` stages bodies 1..7
+in every commit, so it does not need that workaround.
+
+`--write-friction` (requires `--write-model`) also writes the identified
+friction to the firmware's 0x26 vectors: item 9 = `fv`, item 10 = `fc0`,
+item 11 = `fc1`. The contracts
+`fv >= 0`, `fc0 >= 0`, `fc1 <= 0` are checked before any write. Friction takes
+effect immediately (there is no staging/commit); `--rollback-gravity` restores
+the previous friction values too, and the readback error is printed.
+
 `--load-result` writes `phi` to the firmware exactly as stored. Only load files
 identified against the DH link frames (an SN config exported by this tool, or a
 legacy `identified_params` file declaring `phi_frame: craig_mdh_link_frames`,
@@ -297,7 +318,7 @@ check; other non-physical files require `--allow-nonphysical`.
 
 ```bash
 ./build/10_identify --go --cycles 4 --write-model
-./build/10_identify --go --cycles 4 --write-model --write-jm
+./build/10_identify --go --cycles 4 --write-model --write-jm --write-friction
 ```
 
 To write an existing result without capturing again, add `--load-result`.
@@ -363,7 +384,7 @@ Outputs: `payload_loaded_<stamp>.csv` and `payload_result_<stamp>.yaml` under `-
 
 - `--go` is required for motion; without it the example only connects and prints the plan.
 - The loaded run zeroes the firmware payload feedforward before sampling. If you do not pass
-  `--apply`, the firmware payload stays zero after the run.
+  `--apply`, the pre-run payload is restored when the run finishes.
 - Use the same `--pose-count` / `--pose-set` for the baseline and the loaded run.
 - The example leaves the arm enabled and holding at the last pose; home or disable it yourself.
 - The default speed is 0.10; pass `--speed 0.05` for a slower first pass.
@@ -414,7 +435,9 @@ the front axes whose model error is larger. Each pose is sampled at 80 samples
 at 12 ms, `|dq| <= 0.03 rad/s`, with a fixed lead-in pose and a speed scale of
 0.10 (hard limit 0.20). Before a loaded capture the example zeros the firmware
 payload feedforward (`set_payload(0,0,0)`), because an active payload biases the
-measured torques; write the identified value back afterwards.
+measured torques. The pre-run payload is restored when the run finishes; pass
+`--apply` to install the identified payload instead (otherwise the previous
+value comes back, including after an interrupted or failed run).
 `--pose-count 3` or `--pose-set ...` still gives rank 4 for a quick check, but
 fewer poses leave fewer equations for the same residual — use all 20 for the
 final identification. Every pose is checkpointed
@@ -433,7 +456,8 @@ arm:
 
 `--apply` calls `set_payload(mass, com)` and reads the values back; the
 firmware silently clamps out-of-range values. It writes RAM only and never
-calls `save_params()`, so a reboot restores the previous payload.
+calls `save_params()`, so a reboot restores the previous payload. Without
+`--apply` the example restores the payload that was active before the run.
 
 ## Limitations
 

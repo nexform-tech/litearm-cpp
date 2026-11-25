@@ -87,8 +87,9 @@ target_link_libraries(your_app PRIVATE litearm::litearm)
 identification (70 inertia, symmetric/asymmetric Coulomb, viscous, jm3..jm7),
 supports offline solving of a Python `fourier_log.csv`, real-arm pure-PD capture
 through `send_mit_all` + the 300 Hz firmware log, and a guarded
-`--write-model` path. Eigen3 is required only for this target; the core SDK
-stays dependency-free. See [`docs/IDENTIFICATION.md`](docs/IDENTIFICATION.md).
+`--write-model` / `--write-friction` path. Eigen3 is required only for this
+target; the core SDK stays dependency-free. See
+[`docs/IDENTIFICATION.md`](docs/IDENTIFICATION.md).
 
 ### Installing and packaging
 

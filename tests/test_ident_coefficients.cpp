@@ -216,3 +216,28 @@ TEST(ident_coefficients_default_file_parses) {
     CHECK_EQ(int(FourierTrajectory(segments[0]).harmonics()), 5);
     CHECK_EQ(int(FourierTrajectory(segments[1]).harmonics()), 5);
 }
+
+TEST(ident_coefficients_declared_period_pins_design) {
+    const std::string text = "# period: 24\n" + rows_7x11(sequential_values(1.0));
+    CHECK_EQ(int(parse_fourier_coefficients_text(text, 24.0).size()), 1);
+    CHECK_THROWS_AS(parse_fourier_coefficients_text(text, 48.0),
+                    std::invalid_argument);
+}
+
+TEST(ident_coefficients_declared_period_rejects_bad_value) {
+    const std::string rows = rows_7x11(sequential_values(1.0));
+    CHECK_THROWS_AS(parse_fourier_coefficients_text("# period: nope\n" + rows, 24.0),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(parse_fourier_coefficients_text("# period: 0\n" + rows, 24.0),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(
+        parse_fourier_coefficients_text("# period: 24\n# period: 8\n" + rows, 24.0),
+        std::invalid_argument);
+}
+
+TEST(ident_coefficients_default_file_period_is_pinned) {
+    const std::string text = lt::read_repo_file("examples/fourier_coeffs_default.txt");
+    CHECK(!text.empty());
+    CHECK_THROWS_AS(parse_fourier_coefficients_text(text, 48.0),
+                    std::invalid_argument);
+}

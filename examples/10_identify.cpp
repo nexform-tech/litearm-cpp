@@ -390,15 +390,17 @@ int run_load_result(const example::Args& args) {
     std::printf("WARNING: writing the firmware model requires a disarmed, supported arm\n");
     WriteModelOptions wopt;
     wopt.write_jm = args.has("write-jm");
+    wopt.write_friction = args.has("write-friction");
     wopt.check_gravity = !args.has("no-gravity-check");
     wopt.rollback_on_gravity_mismatch = args.has("rollback-gravity");
     wopt.allow_nonphysical =
         args.has("allow-nonphysical") || fixed_output || result.info.fixed_inertia;
     const WriteModelReport rep = write_model(*arm, result, wopt);
     std::printf("committed mask=0x%03X readback_err=%.3g gravity_delta=%.3f "
-                "rolled_back=%d\n",
+                "friction_written=%d friction_err=%.3g rolled_back=%d\n",
                 rep.staged_mask, rep.max_body_readback_error,
-                rep.max_gravity_delta_nm, int(rep.rolled_back));
+                rep.max_gravity_delta_nm, int(rep.friction_written),
+                rep.max_friction_readback_error, int(rep.rolled_back));
     return rep.rolled_back ? 1 : 0;
 }
 
@@ -578,6 +580,7 @@ int run_real(Arm& arm, const example::Args& args) {
         std::printf("WARNING: writing the firmware model requires a disarmed, supported arm\n");
         WriteModelOptions wopt;
         wopt.write_jm = args.has("write-jm");
+        wopt.write_friction = args.has("write-friction");
         wopt.check_gravity = !args.has("no-gravity-check");
         wopt.rollback_on_gravity_mismatch = args.has("rollback-gravity");
         wopt.allow_nonphysical = !args.has("full-inertia") ||
@@ -585,9 +588,10 @@ int run_real(Arm& arm, const example::Args& args) {
                                  result.info.fixed_inertia;
         const WriteModelReport rep = write_model(arm, result, wopt);
         std::printf("committed mask=0x%03X readback_err=%.3g gravity_delta=%.3f "
-                    "rolled_back=%d\n",
+                    "friction_written=%d friction_err=%.3g rolled_back=%d\n",
                     rep.staged_mask, rep.max_body_readback_error,
-                    rep.max_gravity_delta_nm, int(rep.rolled_back));
+                    rep.max_gravity_delta_nm, int(rep.friction_written),
+                    rep.max_friction_readback_error, int(rep.rolled_back));
     }
     return 0;
 }
@@ -602,7 +606,8 @@ int main(int argc, char** argv) {
         "                          --write-model to write it back without capture)\n"
         "  --output DIR            output directory (default ident_result)\n"
         "  --cycles N              cycles per segment (default 4)\n"
-        "  --period S              Fourier period (default 24)\n"
+        "  --period S              Fourier period (default 24); must match the\n"
+        "                          '# period:' declared in the coefficient file\n"
         "  --coeffs FILE           Fourier coefficients instead of the default\n"
         "                          file examples/fourier_coeffs_default.txt: 1-2\n"
         "                          segments of 77 numbers, joint-major\n"
@@ -639,12 +644,17 @@ int main(int argc, char** argv) {
         "  --urdf-sha256 HEX       record the matching SHA-256 in the SN header\n"
         "  --write-model           write bodies 1..7 to the firmware\n"
         "  --write-jm              also write jm\n"
+        "  --write-friction        also write fv/fc0/fc1 (0x26 items 9/10/11)\n"
         "  --rollback-gravity      rollback on gravity mismatch\n"
         "  --home-first            enable + home to the zero pose before capture\n"
         "  --go                    actually move/capture\n";
 
     example::Args parsed;
     if (!example::parse_args(argc, argv, desc, &parsed)) return 0;
+    if (parsed.has("write-friction") && !parsed.has("write-model")) {
+        std::fprintf(stderr, "error: --write-friction requires --write-model\n");
+        return 1;
+    }
     if (external_coefficients_requested(parsed) &&
         (parsed.has("input-csv") || parsed.has("load-result"))) {
         std::fprintf(stderr,

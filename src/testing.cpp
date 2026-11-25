@@ -522,6 +522,9 @@ void FakeTransport::write_frame(uint8_t cmd, const uint8_t* payload, size_t len)
             if (mask != staged) {
                 // 掩码不符 -> 0x07 (与"数值非法"分开的码)
                 push(proto::pack_frame(proto::RSP_ERR, std::vector<uint8_t>{cmd, 0x07}));
+            } else if (model_stage_body.empty()) {
+                // 零模型哨兵: 只 stage 了 jm (没有 body 组) -> 0x02, 与真机一致
+                push(proto::pack_frame(proto::RSP_ERR, std::vector<uint8_t>{cmd, 0x02}));
             } else if (mask & uint16_t(~0x3FF)) {
                 push(proto::pack_frame(proto::RSP_ERR, std::vector<uint8_t>{cmd, 0x02}));
             } else {

@@ -48,7 +48,8 @@ ctest --test-dir build -R 'test_ident_' --output-on-failure
 `assets/litearm/urdf/litearm.urdf` 的连杆系。关节 4/6/7 绕 -Z 旋转
 （`axis = s_i * z`），固定的 `ee_link` 并入 link 7。因此 `phi_flat` 直接表达在 DH
 连杆系里，可以不做任何逐连杆转换就与 `DH/dh_params.yaml` 比对；同一个 `phi` 就是
-`phi_to_body10` / `--write-model` 发给固件的内容。`cad_phi()` 是把厂商 CAD 惯量
+`phi_to_body10` 转换到固件 body10 布局的内容（也是 `--write-model` 发出的内容）。
+`cad_phi()` 是把厂商 CAD 惯量
 重新表达在这些 DH 系里，只作为求解器先验。70 列回归量由 10 个基参数解析构造；
 `rnea()` 是独立的递归牛顿-欧拉实现，用于校验和重力检查。
 
@@ -72,10 +73,11 @@ ctest --test-dir build -R 'test_ident_' --output-on-failure
 其余连杆只调整 `I_com`——质量和一阶矩（`m`、`m*c`）保持不变，所以重力力矩不变。
 这是必需的，因为 `jm1/jm2` 与 link1/link2 的 `Izz` 结构共线并折叠进去；辨识出的张量
 因此可能看起来像细杆并违反三角不等式。`identified_yaml`、`sn_template_yaml` 和
-`write_model` 会重新检查结果，拒绝非有限或非物理参数。固定惯量路径是显式例外：
-它保留提供的 bank，在输出头标记 `# inertia: fixed from ...`，并允许导出/写回该
-bank。`write_model` 在 `--full-inertia` 模式下会在 `disable()` 之前做检查，所以坏
-文件永远不会让正在保持的臂掉下来。
+`write_model` 会重新检查结果，拒绝非有限或非物理参数（除非调用方显式放弃检查）。
+固定惯量路径是显式例外：它保留提供的 bank，在输出头标记 `# inertia: fixed from ...`，
+并允许导出/写回该 bank（`write_model` 的 `allow_nonphysical`，`10_identify` 对固定
+惯量输出会自动打开）。没有这个 opt-out 时，`write_model` 在 `disable()` 之前做检查，
+所以坏文件永远不会让正在保持的臂掉下来。
 
 物理可行性是主机侧条件。固件的 `model.commit` 可能施加额外范围检查；见
 `docs/UNVERIFIED_REGISTER.md`。
@@ -159,6 +161,9 @@ w = 2*pi / period
 文件规则：
 
 - 数字用空白和/或逗号分隔；`#` 开始注释；忽略 UTF-8 BOM；
+- 可选的 `# period: <秒>` 注释钉住设计周期。用不同的 `--period` 解析会被拒绝；格式
+  错误或前后冲突的声明也会被拒绝。没有该注释的文件沿用调用方给的周期（向后兼容）；
+  随包默认文件声明为 24 s；
 - 每段恰好 77 个值；段之间用只含 `---` 的一行分隔，或当当前段已有 77 个值时用
   空行分隔；部分填充段内部的空行被忽略；
 - 行是关节，列是系数。11×7 布局也包含 77 个数，但含义不同；
@@ -170,9 +175,10 @@ w = 2*pi / period
 因子缩放。拟合使用固件的 `q_min`/`q_max` 并保留 0.05 rad 余量，所以也在稍宽的
 URDF 限位内；每段会打印施加的平移/缩放。没有末端高度抬升，也没有 `sigma_min`
 拒绝；规划只把 `z_min` 和 `sigma` 作为信息打印。SN 头记录拟合后的轨迹。`--period`
-必须与设计这些数时使用的周期一致（速度和加速度按 `1/T` 和 `1/T²` 缩放；随包文件
-是按默认 24 s 设计的）。`capture_center` 在命令非有限、超出固件关节限位或跟踪误差
-过大时中止——这是运行期硬件护栏，不是轨迹设计。
+必须与设计这些数时使用的周期一致（速度和加速度按 `1/T` 和 `1/T²` 缩放）；解析器会
+强制文件里的 `# period:` 声明并拒绝不一致，所以随包的 24 s 文件不能在 `--period 48`
+下运行。`capture_center` 在命令非有限、超出固件关节限位或跟踪误差过大时中止——这是
+运行期硬件护栏，不是轨迹设计。
 
 ```bash
 # 默认两段文件的只读规划
@@ -236,6 +242,16 @@ URDF 限位内；每段会打印施加的平移/缩放。没有末端高度抬�
 并可选地把 `get_gravity(q)` 与主机 RNEA 比较。**从不**调用 `save_params()`，所以
 重启会恢复 Flash 模型。提交前请托住机械臂。
 
+`--write-jm` 把 jm 并入同一次提交。只提交 jm 会被固件的零模型哨兵拒绝
+（`ERR{0x32,0x02}`），因为 `stage_begin_jm()` 不会填充 body 组；请用
+`arm.model().commit_jm(jm)`，它会先把当前 bodies 重新 stage 一遍，再提交 `0x2FE`。
+`write_model` 每次提交都会 stage bodies 1..7，因此不需要这个绕过。
+
+`--write-friction`（需要 `--write-model`）还会把辨识出的摩擦写到固件的 0x26 向量：
+item 9 = `fv`，item 10 = `fc0`，item 11 = `fc1`。写之前会检查
+`fv >= 0`、`fc0 >= 0`、`fc1 <= 0` 的契约。摩擦立即生效（没有 staging/commit）；
+`--rollback-gravity` 也会恢复之前的摩擦值，并打印读回误差。
+
 `--load-result` 把 `phi` 原样写进固件。只载入针对 DH 连杆系辨识的文件（本工具导出的
 SN 配置，或声明 `phi_frame: craig_mdh_link_frames` 的旧版 `identified_params` 文件，
 或 `model.urdf_path` 指向 `DH/litearm_dh.urdf` 时产生的 Python 结果）。针对厂商 URDF
@@ -246,7 +262,7 @@ SN 配置，或声明 `phi_frame: craig_mdh_link_frames` 的旧版 `identified_p
 
 ```bash
 ./build/10_identify --go --cycles 4 --write-model
-./build/10_identify --go --cycles 4 --write-model --write-jm
+./build/10_identify --go --cycles 4 --write-model --write-jm --write-friction
 ```
 
 要写入已有结果而不重新采集，加 `--load-result`。不带 `--write-model` 时它只解析
@@ -304,7 +320,7 @@ RNEA 使用的 `phi`。这是控制器的权威模型，不需要示例 10 的�
 `payload_result_<stamp>.yaml`，以及 `--capture-baseline` 指定路径的基线 CSV。
 
 - 必须加 `--go` 才会运动；不加只连接并打印规划。
-- 加载采集前会清掉固件负载前馈。若不加 `--apply`，运行结束后固件负载保持 0。
+- 加载采集前会清掉固件负载前馈。若不加 `--apply`，运行结束时会恢复运行前的负载。
 - 基线与加载运行必须使用相同的 `--pose-count` / `--pose-set`。
 - 示例结束时会保持使能并停在末位姿；请自行回零或失能。
 - 默认速度 0.10；第一次可传 `--speed 0.05` 更慢。
@@ -346,8 +362,9 @@ tau      = Y(q) theta
 J5..J7 变化（20 个代表性腕部角/边/中心；秩 4，条件数 4.33，EE z 0.25–0.40 m）。
 拟合只用 J5..J7，避开模型误差更大的前轴。每个位姿以 12 ms 采样 80 个样本，
 `|dq| <= 0.03 rad/s`，带固定引导位姿，速度倍率 0.10（硬上限 0.20）。加载采集前，
-示例会把固件负载前馈清零（`set_payload(0,0,0)`），因为有负载会偏置实测力矩；
-采集后要把辨识值写回。`--pose-count 3` 或 `--pose-set ...` 仍可在快速检查时给出
+示例会把固件负载前馈清零（`set_payload(0,0,0)`），因为有负载会偏置实测力矩。运行结束
+时会恢复运行前的负载；要改为写入辨识出的负载请传 `--apply`（中断或失败时也会恢复）。
+`--pose-count 3` 或 `--pose-set ...` 仍可在快速检查时给出
 秩 4，但位姿更少意味着同样残差下方程更少——最终辨识请用全部 20 个。每个位姿都会
 以 `complete: 0` 检查点写入 CSV；最终行集为 `complete: 1`，所以中断的采集会被
 拒绝，而不会静默求解部分序列。加载采集总是写到
@@ -362,7 +379,8 @@ J5..J7 变化（20 个代表性腕部角/边/中心；秩 4，条件数 4.33，E
 ```
 
 `--apply` 调用 `set_payload(mass, com)` 并读回数值；固件会静默钳制越界值。它只写
-RAM，从不调用 `save_params()`，所以重启会恢复之前的负载。
+RAM，从不调用 `save_params()`，所以重启会恢复之前的负载。不加 `--apply` 时，示例会
+恢复运行前生效的负载。
 
 ## 限制
 

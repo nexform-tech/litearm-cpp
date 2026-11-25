@@ -185,7 +185,9 @@ const std::map<std::pair<int, int>, std::string>& build_err_text() {
         {{0x32, 0x01}, "载荷长度不足 (需 2 字节: expected_mask)"},
         {{0x32, 0x04}, "武装中 —— 须先失能 (门控排在掩码校验之前)"},
         {{0x32, 0x07}, "**模型掩码不符** —— 产线最常见故障, 与「数值非法」完全不同"},
-        {{0x32, 0x02}, "dyn_model_commit 失败"},
+        {{0x32, 0x02}, "dyn_model_commit 失败 —— 常见原因是零模型哨兵: 本次会话只 "
+                       "stage 了 jm 而没有 body 组 (用 model.commit_jm() 先补 stage "
+                       "body1..7), 或数值非法"},
         {{0x33, 0x01}, "载荷长度不足 (需 4xJM_N 字节)"},
         {{0x33, 0x02}, "staging 失败 (数值非法)"},
         {{0x34, 0x01}, "载荷长度不足 (需 1 字节: body_idx)"},

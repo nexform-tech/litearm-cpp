@@ -61,6 +61,9 @@ std::array<double, 10> body10_to_phi(const std::array<double, 10>& body);
 
 struct WriteModelOptions {
     bool write_jm = false;
+    /// Also write the identified friction to the firmware's 0x26 vectors:
+    /// item 9 = fv, item 10 = fc0, item 11 = fc1.
+    bool write_friction = false;
     bool check_gravity = true;
     double gravity_tolerance_nm = 0.25;
     bool rollback_on_gravity_mismatch = false;
@@ -74,15 +77,22 @@ struct WriteModelReport {
     std::vector<std::vector<double>> new_bodies;
     std::vector<double> old_jm;
     std::vector<double> new_jm;
+    /// fv/fc0/fc1 in that order; populated only when write_friction is set.
+    std::vector<std::vector<double>> old_friction;
+    std::vector<std::vector<double>> new_friction;
     std::uint16_t staged_mask = 0;
     double max_body_readback_error = 0.0;
+    double max_friction_readback_error = 0.0;
     double max_gravity_delta_nm = 0.0;
     bool committed = false;
+    bool friction_written = false;
     bool rolled_back = false;
 };
 
-/// Write bodies 1..7 (and optionally jm) through arm.model(); never calls
-/// save_params().  The arm must be disarmed/supported by the caller.
+/// Write bodies 1..7 (and optionally jm and friction) through arm.model() /
+/// set_ff_vec(); never calls save_params().  The arm must be disarmed/supported
+/// by the caller.  allow_nonphysical skips the host physical-validity check so
+/// a fixed-inertia controller bank can be written back verbatim.
 WriteModelReport write_model(Arm& arm, const IdentResult& result,
                              const WriteModelOptions& options = {});
 

@@ -94,14 +94,6 @@ BodyCom phi_link_com(const std::array<double, 10>& p) {
     return b;
 }
 
-bool finite_body(const std::array<double, 10>& b) {
-    for (double v : b) if (!std::isfinite(v)) return false;
-    if (!(b[0] > 1e-6)) return false;
-    const BodyCom bc = phi_link_com(b);
-    Eigen::SelfAdjointEigenSolver<Mat3> eig(bc.I);
-    return eig.eigenvalues().minCoeff() > 0.0;
-}
-
 double parse_number(const std::string& s, const char* what) {
     try {
         std::size_t used = 0;
@@ -485,8 +477,35 @@ std::string sn_template_yaml(const IdentResult& result,
 WriteModelReport write_model(Arm& arm, const IdentResult& result,
                              const WriteModelOptions& options) {
     // Refuse physically impossible parameters before touching the arm (and
-    // before disable(): a bad file must not drop a holding arm).
+    // before disable(): a bad file must not drop a holding arm).  With
+    // allow_nonphysical the fixed-inertia bank is written back verbatim.
     if (!options.allow_nonphysical) require_physical(result.phi, "write_model");
+
+    // The firmware's friction contract is absolute (0x26 items 9/10/11:
+    // fv >= 0, fc0 >= 0, fc1 <= 0).  Check it before any write: a rejection
+    // after the model commit would leave the arm half-updated.
+    std::vector<std::vector<double>> new_friction;
+    if (options.write_friction) {
+        const Vec7 fc0 = result.fc0();
+        const Vec7 fc1 = result.fc1();
+        new_friction.assign(3, std::vector<double>(size_t(kJoints), 0.0));
+        for (int j = 0; j < kJoints; ++j) {
+            const double fv = result.viscous[size_t(j)];
+            const double c0 = fc0[size_t(j)];
+            const double c1 = fc1[size_t(j)];
+            if (!std::isfinite(fv) || !std::isfinite(c0) || !std::isfinite(c1) ||
+                fv < -1e-12 || c0 < -1e-12 || c1 > 1e-12) {
+                throw InvalidCommandError(
+                    "write_model: joint " + std::to_string(j + 1) +
+                    " violates the friction contract (fv>=0, fc0>=0, fc1<=0)");
+            }
+            // Clamp tiny negatives so the firmware sees a valid sign.
+            new_friction[0][size_t(j)] = std::max(0.0, fv);
+            new_friction[1][size_t(j)] = std::max(0.0, c0);
+            new_friction[2][size_t(j)] = std::min(0.0, c1);
+        }
+    }
+
     if (arm.n() != kJoints) {
         throw InvalidCommandError("write_model: requires a 7-joint arm");
     }
@@ -508,14 +527,16 @@ WriteModelReport write_model(Arm& arm, const IdentResult& result,
         rep.old_bodies.push_back(arm.model().get_body(i).value);
     }
     rep.old_jm = arm.model().get_jm().value;
+    if (options.write_friction) {
+        rep.old_friction.resize(3);
+        for (int k = 0; k < 3; ++k) {
+            rep.old_friction[size_t(k)] = arm.get_ff_vec(9 + k).value;
+        }
+    }
 
     for (int i = 0; i < kJoints; ++i) {
         std::array<double, 10> p{};
         for (int k = 0; k < 10; ++k) p[size_t(k)] = result.phi[size_t(i * 10 + k)];
-        if (!finite_body(p)) {
-            throw InvalidCommandError("write_model: link " + std::to_string(i + 1) +
-                                      " is not physically valid");
-        }
         const auto b = phi_to_body10(p);
         rep.new_bodies.push_back({b[0], b[1], b[2], b[3], b[4], b[5],
                                   b[6], b[7], b[8], b[9]});
@@ -546,6 +567,22 @@ WriteModelReport write_model(Arm& arm, const IdentResult& result,
         }
     }
 
+    if (options.write_friction) {
+        rep.new_friction = new_friction;
+        arm.set_ff_vec(9, rep.new_friction[0]);
+        arm.set_ff_vec(10, rep.new_friction[1]);
+        arm.set_ff_vec(11, rep.new_friction[2]);
+        rep.friction_written = true;
+        for (int k = 0; k < 3; ++k) {
+            const auto got = arm.get_ff_vec(9 + k).value;
+            for (int j = 0; j < kJoints; ++j) {
+                rep.max_friction_readback_error = std::max(
+                    rep.max_friction_readback_error,
+                    std::abs(got[size_t(j)] - rep.new_friction[size_t(k)][size_t(j)]));
+            }
+        }
+    }
+
     if (options.check_gravity) {
         for (const auto& q : gravity_check_poses()) {
             const Vec7 g_host = rnea(q, Vec7{}, Vec7{}, result.phi);
@@ -560,11 +597,16 @@ WriteModelReport write_model(Arm& arm, const IdentResult& result,
             for (int i = 0; i < kJoints; ++i)
                 arm.model().set_body(i + 1, rep.old_bodies[size_t(i)]);
             uint16_t rollback_mask = 0x0FE;
-            if (!rep.old_jm.empty()) {
+            if (options.write_jm) {
                 arm.model().set_jm(rep.old_jm);
                 rollback_mask = MODEL_MASK_WRITTEN;
             }
             arm.model().commit(rollback_mask);
+            if (rep.friction_written) {
+                arm.set_ff_vec(9, rep.old_friction[0]);
+                arm.set_ff_vec(10, rep.old_friction[1]);
+                arm.set_ff_vec(11, rep.old_friction[2]);
+            }
             rep.rolled_back = true;
         }
     }
