@@ -242,10 +242,14 @@ Arm& Arm::connect_impl(const std::optional<std::string>& port) {
         throw;
     }
     const auto ver = proto::parse_firmware_version(firmware_);
-    if (!ver || firmware_.rfind(FIRMWARE_PREFIX, 0) != 0) {
+    // ⚠ 下面三条门禁都是**先 close() 再抛** —— 而 close() 会清掉 firmware_ (它随会话清)。
+    //   报错文案必须用这份快照, 否则现场看到的是"固件  的变体是 ..." (版本串是空的),
+    //   等于把最关键的诊断信息丢了。
+    const std::string fw = firmware_;
+    if (!ver || fw.rfind(FIRMWARE_PREFIX, 0) != 0) {
         close();
         throw FirmwareMismatchError(
-            "固件版本不符合约定: '" + firmware_ + "' —— 应为 " + FIRMWARE_PREFIX +
+            "固件版本不符合约定: '" + fw + "' —— 应为 " + FIRMWARE_PREFIX +
             "<主.次.修>-7J; 请烧录 >=" + FIRMWARE_PREFIX +
             std::to_string(min_firmware_.major) + "." +
             std::to_string(min_firmware_.minor) + "." +
@@ -254,22 +258,25 @@ Arm& Arm::connect_impl(const std::optional<std::string>& port) {
     if (*ver < min_firmware_) {
         close();
         throw FirmwareMismatchError(
-            "固件 " + firmware_ + " 过旧: 需 >=" + FIRMWARE_PREFIX +
+            "固件 " + fw + " 过旧: 需 >=" + FIRMWARE_PREFIX +
             std::to_string(min_firmware_.major) + "." +
             std::to_string(min_firmware_.minor) + "." +
             std::to_string(min_firmware_.patch) + " (move_j 受控静止保持语义)");
     }
-    // 变体门: 只认整臂 7J。台架单电机 (1J) 模式已弃用 (固件 2026-09-28 移除), 本 SDK
-    // 同步不再支持 —— 与其放它连上、再在状态帧/IK 种子这些下游各自兜底, 不如在这里
-    // 一次拒掉并说清原因 (下游为此存在的兜底分支也随这次一并删了)。
+    // 变体门: 整臂 7J, 外加同一套 7J 协议的测试构建 —— 厂内把版本串标成
+    // "<主.次.修>-test-7J" 来区分实验镜像 (见 litearm-stm32 的 merge 分支); 它仍是
+    // 7 关节整臂, 状态帧/IK 种子与正式版同形, 拒掉只会让测试镜像没法用上位机。
+    // 台架单电机 (1J) 模式已弃用 (固件 2026-09-28 移除), 本 SDK 同步不再支持 ——
+    // 与其放它连上、再在状态帧/IK 种子这些下游各自兜底, 不如在这里一次拒掉并说清原因
+    // (下游为此存在的兜底分支也随这次一并删了)。
     // ⚠ 空变体同样拒: 固件的两支 (litearm.h 的 `#if LITEARM_BENCH_1J`) 都带变体后缀,
     //   所以"没后缀"不属于任何已知形态, 当成未知设备而不是默认成 7J。
-    if (ver->variant != "7J") {
+    if (ver->variant != "7J" && ver->variant != "test-7J") {
         close();
         throw FirmwareMismatchError(
-            "固件 " + firmware_ + " 的变体是 '" + ver->variant +
-            "', 不是 '7J' —— 台架单电机 (1J) 模式已不受支持; 请烧录 " + FIRMWARE_PREFIX +
-            "<主.次.修>-7J");
+            "固件 " + fw + " 的变体是 '" + ver->variant +
+            "', 不是 '7J' 或 'test-7J' —— 台架单电机 (1J) 模式已不受支持; 请烧录 " +
+            FIRMWARE_PREFIX + "<主.次.修>-7J");
     }
     fw_version_ = *ver;
     // 等待一帧状态定关节数

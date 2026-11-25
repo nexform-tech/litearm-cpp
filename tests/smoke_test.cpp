@@ -6,10 +6,12 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "litearm/litearm.hpp"
+#include "litearm/testing.hpp"
 
 namespace {
 
@@ -61,6 +63,51 @@ int main() {
     const auto pose = litearm::rot::as_pose(
         std::array<double, 6>{0.3, 0.0, 0.4, 0.0, 0.0, 0.0});
     check(near(pose.first[0], 0.3) && near(pose.first[2], 0.4), "as_pose position");
+
+    // 固件变体门: 整臂 7J 与 7 关节测试构建 test-7J 都收, 台架单电机 (1J) 仍拒。
+    const auto test_ver = litearm::proto::parse_firmware_version("Litearm1.13.0-test-7J");
+    check(test_ver.has_value() && test_ver->major == 1 && test_ver->minor == 13 &&
+              test_ver->patch == 0 && test_ver->variant == "test-7J",
+          "test-7J version parses");
+
+    auto try_connect = [](const std::string& fw, std::string* err, std::string* seen_fw) {
+        litearm::ArmOptions opts;
+        opts.port = "fake";   // 注入了工厂就必须给占位 port
+        opts.transport_factory = [fw](const std::string& port) {
+            return std::make_unique<litearm::testing::FakeTransport>(port, 0.2, fw, 7);
+        };
+        try {
+            litearm::Arm arm(opts);
+            arm.connect();
+            if (seen_fw != nullptr) *seen_fw = arm.firmware();
+            return true;
+        } catch (const std::exception& e) {
+            if (err != nullptr) *err = e.what();
+            return false;
+        }
+    };
+    {
+        std::string err;
+        std::string seen_fw;
+        check(try_connect("Litearm1.13.0-test-7J", &err, &seen_fw), "connect accepts test-7J");
+        check(seen_fw == "Litearm1.13.0-test-7J", "firmware() reports the test build");
+    }
+    // 回归: 门禁是"先 close() 再抛", 而 close() 清 firmware_ —— 报错文案必须用快照,
+    // 否则现场只能看到"固件  的变体是 '1J'" (版本串空), 无从判断板上烧的是哪一版。
+    {
+        std::string err;
+        const bool ok = try_connect("Litearm1.13.0-1J", &err, nullptr);
+        check(!ok, "connect rejects 1J");
+        check(err.find("Litearm1.13.0-1J") != std::string::npos,
+              "rejection names the actual firmware string");
+    }
+    {
+        std::string err;
+        const bool ok = try_connect("Litearm1.13.0-test-1J", &err, nullptr);
+        check(!ok, "connect rejects test-1J");
+        check(err.find("Litearm1.13.0-test-1J") != std::string::npos,
+              "test-1J rejection names the actual firmware string");
+    }
 
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

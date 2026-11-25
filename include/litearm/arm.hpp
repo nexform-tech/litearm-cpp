@@ -6,7 +6,7 @@
 //   - 笛卡尔运动只有一条路: 固件规划 move_l/move_c/move_path;
 //   - 连续伺服 (move_js/send_mit) 需调用方按 >=10Hz 重发, 否则 0.1s 看门狗 fail-soft。
 //
-// 固件版本约定: get_firmware 应回 'Litearm<主.次.修>-{7J|1J}';
+// 固件版本约定: get_firmware 应回 'Litearm<主.次.修>-7J' (测试构建 '<主.次.修>-test-7J' 同收);
 // <1.5.0 拒绝 (依赖 6+21N 状态帧 / joint_fault / enabled 位 + 静止保持语义)。
 #pragma once
 

@@ -53,7 +53,7 @@ CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, 无末异或), 覆盖 [SOF..P
 
 上行 100Hz 状态帧 (两种布局, 尾部 `joint_fault u16` 是固件 1.5.0 起新增的)。
 `N` 恒为 7 —— 台架单电机 (1J) 模式已于固件 2026-09-28 移除, 本 SDK 不再支持
-(`decode_status` 拒收其余关节数, `connect()` 拒收版本变体不是 `7J` 的固件):
+(`decode_status` 拒收其余关节数, `connect()` 拒收版本变体不是 `7J` / `test-7J` 的固件):
 
 | 布局 | 固件 | 长度 (7J) |
 | --- | --- | --- |

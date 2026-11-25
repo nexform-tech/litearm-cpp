@@ -241,7 +241,7 @@ struct FirmwareVersion {
     int major = 0;
     int minor = 0;
     int patch = 0;
-    std::string variant;   // 只有 "7J"; "1J" (台架单电机) 已弃用, connect() 会拒
+    std::string variant;   // "7J" 或测试构建 "test-7J"; "1J" (台架单电机) 已弃用, connect() 会拒
     bool operator<(const FirmwareVersion& o) const {
         if (major != o.major) return major < o.major;
         if (minor != o.minor) return minor < o.minor;

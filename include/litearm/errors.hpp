@@ -50,7 +50,7 @@ public:
     using LiteArmError::LiteArmError;
 };
 
-/// 固件版本不符合约定 (应 Litearm<主.次.修>-{7J|1J}) 或不满足最低版本。
+/// 固件版本不符合约定 (应 Litearm<主.次.修>-7J, 测试构建 -test-7J 同收) 或不满足最低版本。
 class FirmwareMismatchError : public LiteArmError {
 public:
     using LiteArmError::LiteArmError;
