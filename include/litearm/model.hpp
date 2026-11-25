@@ -14,6 +14,8 @@
 //     arm.model().set_body(1, {...});  // J1 ... J7
 //     arm.model().set_jm({...});       // 7 个
 //     arm.model().commit(MODEL_MASK_WRITTEN);   // 0x2FE
+// 只更新 jm 时用 commit_jm({...}): 零模型哨兵要求 staging 里有 body 组,
+// 该方法会先把 bank 的 body1..7 原样补 stage 一遍.
 #pragma once
 
 #include <cstdint>
@@ -89,6 +91,13 @@ public:
     /// 写 staging 的 jm[7]。**不生效**, 须 commit()。
     /// ⚠ set_jm 会改写关节映射, 用错会让臂乱摆且没有可靠的回退路径 —— 谨慎使用。
     void set_jm(const std::vector<double>& vals);
+
+    /// 只更新 jm: 先按当前 bank 原值补 stage body1..7, 再 set_jm + commit(0x2FE)。
+    ///
+    /// 固件的零模型哨兵会检查本次会话 stage 的 body 组; 只 set_jm 时 body 组为空,
+    /// commit 回 ERR{0x32,0x02}. 本方法把 bank 的 body1..7 原样重 stage 一遍, 使
+    /// 提交携带完整模型. 须已失能; 固件有未提交的 staging 改动时拒绝.
+    void commit_jm(const std::vector<double>& vals);
 
     /// staging 整组原子生效。
     ///

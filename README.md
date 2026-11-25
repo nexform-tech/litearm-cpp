@@ -1,16 +1,29 @@
+English | [简体中文](README.zh-CN.md)
+
+litearm-cpp is a C++ SDK for the LiteArm robotic arm. It talks directly to the firmware over USB and leaves planning, kinematics and dynamics to the firmware.
+
 # litearm-cpp
 
-A **C++ SDK** for the LiteArm robotic arm — it talks **directly to the firmware over a USB
-serial link**. No server, no middleware. Trajectory planning, kinematics and dynamics all live
-in the firmware; the host only sends waypoints and reads results back.
+No server, no middleware. The host only sends waypoints and reads results back.
 
 This repository is the C++ port of
 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.1.0: the same wire
 protocol, the same semantics, the same safety criteria, ported line by line. The test suite
 is likewise fully offline.
 
-> Full API reference: [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
-> field troubleshooting (symptom → cause → fix): [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+## Documentation and examples
+
+This README covers the overview, build, quick start and safety rules. Use the table below when
+you need the full API, a runnable example, troubleshooting, identification or the DH model notes.
+
+| I need... | Read |
+| --- | --- |
+| A runnable program or a hardware smoke test | [examples/README.md](examples/README.md) — all 11 examples, flags and safety conventions |
+| The full API, wire protocol or internals | [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) |
+| Field troubleshooting (symptom → cause → fix) | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
+| Dynamics identification and model write-back | [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) |
+| DH link-frame parameters and URDF notes | [DH/README.md](DH/README.md) (generated) |
+| Unverified, known-imperfect or deliberately diverging items | [docs/UNVERIFIED_REGISTER.md](docs/UNVERIFIED_REGISTER.md) |
 
 ## Highlights
 
@@ -66,6 +79,17 @@ To consume it as a subdirectory:
 add_subdirectory(third_party/litearm-cpp)
 target_link_libraries(your_app PRIVATE litearm::litearm)
 ```
+
+### Optional dynamics identification
+
+`-DLITEARM_BUILD_IDENT=ON` builds the optional `litearm::ident` module and the
+`10_identify` example. It ports the Python SDK's 96-parameter Fourier
+identification (70 inertia, symmetric/asymmetric Coulomb, viscous, jm3..jm7),
+supports offline solving of a Python `fourier_log.csv`, real-arm pure-PD capture
+through `send_mit_all` + the 300 Hz firmware log, and a guarded
+`--write-model` / `--write-friction` path. Eigen3 is required only for this
+target; the core SDK stays dependency-free. See
+[`docs/IDENTIFICATION.md`](docs/IDENTIFICATION.md).
 
 ### Installing and packaging
 
@@ -494,15 +518,8 @@ When stress-testing the CAN link, run only `candump` (read-only); **never `cange
 
 ## Examples
 
-See [examples/README.md](examples/README.md):
-
-- `01_hello` — handshake + firmware version + read state
-- `02_movej` — joint motion
-- `03_move_p` — Cartesian point to point
-- `04_ik_tcp` — inverse kinematics and the current pose
-- `05_ff_tune` — dynamics / control-law tuning
-- `06_cartesian` — Cartesian line / arc / multi-waypoint
-- `07_vel_jitter_trace` — tick-by-tick capture of the 100 Hz status stream and the 300 Hz firmware log together
+Eleven runnable programs live in `examples/`. The full index, per-example flags and safety
+conventions are in [examples/README.md](examples/README.md).
 
 Examples are **read-only by default**; anything that moves requires `--go`:
 
@@ -514,20 +531,19 @@ source env.sh
 
 ## Verification
 
-This repository does not ship a test suite. Verify a build with:
+Run the offline build and test suite:
 
 ```bash
-./build.sh
-./build/litearm-cpp --help
+./build.sh --werror
+ctest --test-dir build --output-on-failure
 ```
 
-`litearm::testing::FakeTransport` is still part of the library, so you can write your own
-offline tests against the same transport interface. References to `tests/...` elsewhere in this
-document describe the suite that was removed on 2026-10-26; they are historical.
+`litearm::testing::FakeTransport` is part of the library, so you can write your own offline
+tests against the same transport interface.
 
 ### The unverified register
 
-`UNVERIFIED_REGISTER.md` at the repository root lists, item by item, everything that is
+`docs/UNVERIFIED_REGISTER.md` lists, item by item, everything that is
 **unverified / known-imperfect / deliberately diverging from the reference implementation** —
 and **every entry must carry a source reference** (`file:line`), otherwise it does not count
 as registered (nobody can re-check it in the field). Skim it before saying "this was tested".
@@ -766,7 +782,7 @@ enable/disable round trips, and emergency stop with recovery; the frame-by-frame
 
 **Still never run on hardware**: the four irreversible ones (`save_params` / `model().commit()`
 / `reset_factory` / `enter_dfu` — excluded by user decision) plus `activate()` (this board is
-already activated). See `UNVERIFIED_REGISTER.md` entry 14. Do not read "most things verified"
+already activated). See `docs/UNVERIFIED_REGISTER.md` entry 14. Do not read "most things verified"
 as "everything verified".
 
 On Windows, build with MSVC + CMake (`cmake -S . -B build -G "Visual Studio 17 2022"`).

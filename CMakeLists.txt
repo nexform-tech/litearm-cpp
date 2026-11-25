@@ -18,6 +18,7 @@ endif()
 
 option(LITEARM_BUILD_EXAMPLES "构建 examples/" ON)
 option(LITEARM_BUILD_TESTS "构建最小离线测试" ON)
+option(LITEARM_BUILD_IDENT "构建可选动力学辨识模块 (需要 Eigen3)" OFF)
 option(LITEARM_WERROR "把编译警告当错误" OFF)
 
 add_library(litearm
@@ -68,6 +69,38 @@ add_executable(litearm-cpp cli/main.cpp)
 target_link_libraries(litearm-cpp PRIVATE litearm)
 
 # ---------------------------------------------------------------------------
+# optional dynamics identification (Eigen3)
+# ---------------------------------------------------------------------------
+if(LITEARM_BUILD_IDENT)
+    find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+    add_library(litearm_ident
+        src/ident/model.cpp
+        src/ident/trajectory.cpp
+        src/ident/coefficients.cpp
+        src/ident/solver.cpp
+        src/ident/capture.cpp
+        src/ident/csv.cpp
+        src/ident/export.cpp
+        src/ident/payload.cpp
+    )
+    add_library(litearm::ident ALIAS litearm_ident)
+    target_include_directories(litearm_ident
+        PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                $<INSTALL_INTERFACE:include>
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(litearm_ident PUBLIC litearm PRIVATE Eigen3::Eigen)
+    if(MSVC)
+        target_compile_options(litearm_ident PRIVATE /W4)
+    else()
+        target_compile_options(litearm_ident PRIVATE -Wall -Wextra)
+        if(LITEARM_WERROR)
+            target_compile_options(litearm_ident PRIVATE -Werror)
+        endif()
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # 最小离线测试 —— 不接硬件, 覆盖帧编解码、CRC、位姿数学和版本。
 # ---------------------------------------------------------------------------
 if(LITEARM_BUILD_TESTS)
@@ -84,7 +117,9 @@ if(LITEARM_BUILD_EXAMPLES)
     file(GLOB LITEARM_EXAMPLE_SOURCES CONFIGURE_DEPENDS
          "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.cpp")
     list(REMOVE_ITEM LITEARM_EXAMPLE_SOURCES
-         "${CMAKE_CURRENT_SOURCE_DIR}/examples/_common.cpp")
+         "${CMAKE_CURRENT_SOURCE_DIR}/examples/_common.cpp"
+         "${CMAKE_CURRENT_SOURCE_DIR}/examples/10_identify.cpp"
+         "${CMAKE_CURRENT_SOURCE_DIR}/examples/11_identify_payload.cpp")
     add_library(litearm_examples_common STATIC examples/_common.cpp)
     target_link_libraries(litearm_examples_common PUBLIC litearm)
     foreach(src ${LITEARM_EXAMPLE_SOURCES})
@@ -92,9 +127,46 @@ if(LITEARM_BUILD_EXAMPLES)
         add_executable(${name} ${src})
         target_link_libraries(${name} PRIVATE litearm_examples_common)
     endforeach()
+    if(LITEARM_BUILD_IDENT)
+        add_executable(10_identify examples/10_identify.cpp)
+        target_link_libraries(10_identify PRIVATE litearm_examples_common litearm::ident)
+        # 10_identify loads examples/fourier_coeffs_default.txt by default; bake
+        # the source directory in so the binary also works from the build tree.
+        target_compile_definitions(10_identify PRIVATE
+            "LITEARM_EXAMPLES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/examples\"")
+        add_executable(11_identify_payload examples/11_identify_payload.cpp)
+        target_link_libraries(11_identify_payload PRIVATE
+                              litearm_examples_common litearm::ident)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
+# ident tests —— 仅在启用动力学辨识模块时构建 (需要 Eigen3)。
+# ---------------------------------------------------------------------------
+# ⚠⚠ 交叉编译时同样不许开: 测试二进制在构建机上跑不了。
+if(CMAKE_CROSSCOMPILING AND LITEARM_BUILD_TESTS AND LITEARM_BUILD_IDENT)
+    message(FATAL_ERROR
+        "交叉编译时不允许构建 ident 测试: 测试二进制在构建机上跑不了。"
+        "请加 -DLITEARM_BUILD_IDENT=OFF 或 -DLITEARM_BUILD_TESTS=OFF。")
+endif()
+
+if(LITEARM_BUILD_TESTS AND LITEARM_BUILD_IDENT)
+    add_library(litearm_test_support STATIC tests/test_framework.cpp)
+    target_include_directories(litearm_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(litearm_test_support PUBLIC litearm)
+
+    file(GLOB LITEARM_IDENT_TEST_SOURCES CONFIGURE_DEPENDS
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ident_*.cpp")
+    foreach(src ${LITEARM_IDENT_TEST_SOURCES})
+        get_filename_component(name ${src} NAME_WE)
+        add_executable(${name} ${src})
+        target_link_libraries(${name} PRIVATE litearm_test_support litearm::ident)
+        add_test(NAME ${name} COMMAND ${name})
+        # 有用例 SKIP 时框架返回 77 —— 让 ctest 报 `***Skipped` 而不是 "Passed"。
+        set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+endif()
 # install / 打包
 # ---------------------------------------------------------------------------
 # 客户两种用法都支持:

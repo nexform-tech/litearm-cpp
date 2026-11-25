@@ -37,10 +37,11 @@ EXTRA=()
 RUNNER=()
 TSAN=0
 CLEAN=0
+WERROR=OFF
 
 for a in "$@"; do
     case "$a" in
-        --werror) EXTRA+=("-DLITEARM_WERROR=ON") ;;
+        --werror) WERROR=ON ;;
         --asan)   EXTRA+=("-DCMAKE_BUILD_TYPE=Debug"
                           "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer") ;;
         --tsan)   TSAN=1
@@ -82,6 +83,7 @@ if [ "$TSAN" = 1 ]; then
     export TSAN_OPTIONS="halt_on_error=0:exitcode=0${TSAN_OPTIONS:+:$TSAN_OPTIONS}"
 fi
 
-cmake -S "$DIR" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release "${EXTRA[@]}"
+cmake -S "$DIR" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
+    -DLITEARM_BUILD_IDENT=ON -DLITEARM_WERROR="$WERROR" "${EXTRA[@]}"
 cmake --build "$BUILD" -j"$(nproc 2>/dev/null || echo 4)"
 echo "构建完成: $BUILD"

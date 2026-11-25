@@ -104,6 +104,25 @@ void ModelParams::set_jm(const std::vector<double>& vals) {
     arm_->cmd_expect_ack(proto::CMD_SET_MODEL_JM, proto::pack_f32s(vals), "model.set_jm");
 }
 
+void ModelParams::commit_jm(const std::vector<double>& vals) {
+    if (int(vals.size()) != MODEL_JM_N) {
+        throw InvalidCommandError("jm 须为 " + std::to_string(MODEL_JM_N) + " 个, 给的是 " +
+                                  std::to_string(vals.size()) + " 个");
+    }
+    if (status().value.staged_mask != 0) {
+        throw InvalidCommandError(
+            "model.commit_jm: firmware has staged model changes; commit or revert them first");
+    }
+    // 零模型哨兵要求本次 commit 的 staging 里有 body 组: 先读 bank 原值再原样
+    // stage 一遍, 让 commit(0x2FE) 携带完整模型 (只 stage jm 会被回 0x32/0x02).
+    std::vector<std::vector<double>> bodies;
+    bodies.reserve(size_t(MODEL_JM_N));
+    for (int i = 1; i <= MODEL_JM_N; ++i) bodies.push_back(get_body(i).value);
+    for (int i = 1; i <= MODEL_JM_N; ++i) set_body(i, bodies[size_t(i - 1)]);
+    set_jm(vals);
+    commit(MODEL_MASK_WRITTEN);
+}
+
 void ModelParams::commit(uint16_t expected_mask) {
     // ⚠ u16 LE —— 没有 u16 pack helper 时写成单字节会截断 (0x2FE & 0xFF = 0xFE) 而固件
     // len < 2 直接拒。

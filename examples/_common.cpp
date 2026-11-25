@@ -1,5 +1,6 @@
 #include "_common.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -44,13 +45,26 @@ bool parse_args(int argc, char** argv, const std::string& desc, Args* out) {
             out->go = true;
         } else if (a == "--speed" && i + 1 < argc) {
             out->speed = std::atof(argv[++i]);
+            out->speed_explicit = true;
         } else if (a.size() > 2 && a.rfind("--", 0) == 0) {
-            // 样例私有的开关: `--dist 0.1` 或裸 `--verbose`
-            const std::string key = a.substr(2);
+            // 样例私有的开关: `--dist 0.1`, `--verbose`, `--dist=0.1`
+            std::string key = a.substr(2);
             std::string val = "1";
-            if (i + 1 < argc) {
+            const size_t eq = key.find('=');
+            if (eq != std::string::npos) {
+                val = key.substr(eq + 1);
+                key = key.substr(0, eq);
+            } else if (i + 1 < argc) {
                 const std::string nxt = argv[i + 1];
-                if (!nxt.empty() && (nxt[0] != '-' || parses_as_number(nxt))) val = argv[++i];
+                // 负数字面量 (`-1`, `-.5`) 是值, 不是下一个开关。这让
+                // `--coeffs-inline -1,2,...` 这类列表不必强制写成 `=...`。
+                const bool negative_number =
+                    nxt.size() > 1 && nxt[0] == '-' &&
+                    (std::isdigit(static_cast<unsigned char>(nxt[1])) != 0 ||
+                     nxt[1] == '.');
+                if (!nxt.empty() && (nxt[0] != '-' || parses_as_number(nxt) ||
+                                     negative_number))
+                    val = argv[++i];
             }
             out->extra[key] = val;
         } else if (!a.empty() && a[0] == '-' && !is_known_switch(a) && !parses_as_number(a)) {

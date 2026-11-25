@@ -19,9 +19,13 @@ struct Args {
     std::string port;        // 空 = 自动发现 (VID:PID 1d50:606f)
     bool go = false;         // 真正 enable/运动/改参 (默认只读连接, 不上力)
     double speed = 0.3;      // move 速度倍率 0..1
+    /// 用户是否显式给了 --speed。默认 0.3 是给通用 move 样例的；
+    /// 对速度有更严格要求的样例 (如 11 负载辨识) 据此选择自己的默认值。
+    bool speed_explicit = false;
     std::vector<double> rest;   // 位置参数 (如 movej 的 7 个目标角)
-    /// 本样例私有的开关 (`--dist 0.1` -> extra["dist"] = "0.1")。
+    /// 本样例私有的开关 (`--dist 0.1` / `--dist=0.1` -> extra["dist"])。
     /// 通用解析不认识的 `--x` 都落这里, 免得每个样例各写一遍扫描。
+    /// 紧跟的负数字面量 (`--x -0.1`) 也当作值。
     std::map<std::string, std::string> extra;
 
     /// 取一个位置参数 (越界返回 fallback)。
