@@ -10,6 +10,10 @@ compile_commands.json
 .cache/
 Testing/
 
+# Identification outputs (generated)
+ident_result*/
+payload_result_*.yaml
+
 # IDE
 .vscode/
 .idea/
