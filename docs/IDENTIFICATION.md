@@ -1,3 +1,5 @@
+English | [简体中文](IDENTIFICATION.zh-CN.md)
+
 # Dynamics identification (optional)
 
 This module ports the Python SDK's 96-parameter Fourier identification into
@@ -94,7 +96,7 @@ explicit exception: it keeps the supplied bank, marks the output header with
 bad file never drops a holding arm.
 
 Physical validity is a host-side condition. The firmware's `model.commit`
-may impose additional range checks; see `UNVERIFIED_REGISTER.md`.
+may impose additional range checks; see `docs/UNVERIFIED_REGISTER.md`.
 
 ## Offline use (no arm)
 
@@ -329,6 +331,45 @@ offline CSV replay has no arm, so it still requires `--load-params`. The result
 records `model_source` (firmware bank or the file path) and
 `com_frame: ee_flange (DH/litearm_dh.urdf)` together with the mass and COM.
 
+### Quick start
+
+Build with `./build.sh --werror` (it enables `LITEARM_BUILD_IDENT`). Connect the arm and keep
+the workspace clear. All commands below are run from the repository root.
+
+```bash
+# 1. Read-only: connect, print the pose set, torque margins and rank. No motion.
+./build/11_identify_payload --port /dev/ttyACM0
+
+# 2A. Quick absolute run: the first 3 of the 20 wrist poses, payload installed.
+./build/11_identify_payload --port /dev/ttyACM0 --go --absolute \
+  --pose-count 3 --out /tmp/payload_test
+
+# 2B. Differential run (recommended; the payload must be removable).
+# Remove the payload, then capture the empty baseline:
+./build/11_identify_payload --port /dev/ttyACM0 --go \
+  --capture-baseline /tmp/payload_baseline.csv --pose-count 20
+# Install the payload, then identify against that baseline:
+./build/11_identify_payload --port /dev/ttyACM0 --go \
+  --baseline /tmp/payload_baseline.csv --pose-count 20 --out /tmp/payload_test
+
+# 3. Write the result to the firmware (RAM only; never calls save_params()).
+./build/11_identify_payload --port /dev/ttyACM0 --go \
+  --baseline /tmp/payload_baseline.csv --pose-count 20 --apply
+```
+
+Outputs: `payload_loaded_<stamp>.csv` and `payload_result_<stamp>.yaml` under `--out`
+(default `ident_result`), plus the baseline CSV at the path you pass to
+`--capture-baseline`.
+
+- `--go` is required for motion; without it the example only connects and prints the plan.
+- The loaded run zeroes the firmware payload feedforward before sampling. If you do not pass
+  `--apply`, the firmware payload stays zero after the run.
+- Use the same `--pose-count` / `--pose-set` for the baseline and the loaded run.
+- The example leaves the arm enabled and holding at the last pose; home or disable it yourself.
+- The default speed is 0.10; pass `--speed 0.05` for a slower first pass.
+- If the current pose is outside the soft limits, run
+  `./build/litearm-cpp --port /dev/ttyACM0 home` first.
+
 The payload gravity torque is linear in `theta = [m, m*cx, m*cy, m*cz]`:
 
 ```
@@ -408,4 +449,4 @@ calls `save_params()`, so a reboot restores the previous payload.
   and COM, no payload inertia and no payload friction. A full inertial payload
   would need a model write, not `set_payload`.
 - Hardware capture, baseline capture, and `--apply` are **not** verified by
-  the offline suite. See `UNVERIFIED_REGISTER.md` for the current status.
+  the offline suite. See `docs/UNVERIFIED_REGISTER.md` for the current status.

@@ -1,3 +1,5 @@
+English | [简体中文](README.zh-CN.md)
+
 # Examples
 
 Eleven runnable programs that exercise the SDK against a real arm; read this before running any of them.
@@ -23,6 +25,42 @@ cd ..
 | `09_ik_accuracy` | Firmware IK accuracy sweep: FK model self-check vs `get_tcp`, Halton joint-space sampling, PC-side FK re-evaluation, unreachable-pose rejection, `--dump` CSV | No (read-only) |
 | `10_identify` | Dynamics identification in the controller's Craig/MDH link frames (`DH/litearm_dh.urdf`): default fixes the 70 inertia parameters from `examples/SN.yaml` and identifies only friction/armature; `--full-inertia` for all 96 parameters. Offline CSV solve (`--input-csv`), default two-segment excitation from `examples/fourier_coeffs_default.txt` over 24 s or another coefficient file (`--coeffs`/`--coeffs-inline`, 77 per segment, fitted to the joint limits with the file left unmodified, no ee/singularity handling), SN export, optional `--write-model` (requires `LITEARM_BUILD_IDENT=ON`) | **Yes** for capture/write-back |
 | `11_identify_payload` | End-effector point-mass payload identification (mass + COM) from static gravity poses, using the example-10 DH-frame model: empty baseline (`--capture-baseline`), differential solve (`--baseline`), absolute solve (`--absolute`), offline CSV replay, optional RAM-only `--apply` (requires `LITEARM_BUILD_IDENT=ON`) | **Yes** for capture/apply |
+
+## Example 11 quick start
+
+`11_identify_payload` moves through static wrist poses. Build with `./build.sh --werror`
+(it enables the identification module), then run these commands from the repository root:
+
+```bash
+# Read-only plan: connect, print the pose set, torque margins and rank. No motion.
+./build/11_identify_payload --port /dev/ttyACM0
+
+# Quick absolute run: the first 3 of the 20 wrist poses, payload installed.
+./build/11_identify_payload --port /dev/ttyACM0 --go --absolute \
+  --pose-count 3 --out /tmp/payload_test
+
+# Differential run (recommended; remove the payload for the baseline).
+./build/11_identify_payload --port /dev/ttyACM0 --go \
+  --capture-baseline /tmp/payload_baseline.csv --pose-count 20
+./build/11_identify_payload --port /dev/ttyACM0 --go \
+  --baseline /tmp/payload_baseline.csv --pose-count 20 --out /tmp/payload_test
+
+# Write the result to the firmware (RAM only; never calls save_params()).
+./build/11_identify_payload --port /dev/ttyACM0 --go \
+  --baseline /tmp/payload_baseline.csv --pose-count 20 --apply
+```
+
+Results: `payload_loaded_<stamp>.csv` and `payload_result_<stamp>.yaml` under `--out`
+(default `ident_result`), plus the baseline CSV at the path passed to `--capture-baseline`.
+
+- `--go` is required for motion; without it the example only connects and prints the plan.
+- The loaded run zeroes the firmware payload feedforward. If you do not pass `--apply`, the
+  firmware payload stays zero after the run.
+- Use the same `--pose-count` / `--pose-set` for the baseline and the loaded run.
+- The example leaves the arm enabled and holding at the last pose; home or disable it yourself.
+- The default speed is 0.10; pass `--speed 0.05` for a slower first pass.
+- If the current pose is outside the soft limits, run
+  `./build/litearm-cpp --port /dev/ttyACM0 home` first.
 
 ## Common flags
 

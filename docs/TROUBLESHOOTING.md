@@ -1,3 +1,5 @@
+English | [简体中文](TROUBLESHOOTING.zh-CN.md)
+
 This is the troubleshooting guide for the `litearm` C++ SDK, which drives the
 7-axis arm over the serial line protocol — read it when `connect()`,
 `enable()`, or a motion command fails, misbehaves, or returns something you
@@ -98,7 +100,7 @@ read only the first half of it.
 **Cause**: `fork` **does not copy threads**, but it **does copy file
 descriptors**. So in the child, commands **really do go out on the wire**, and
 the parent's read thread eats the replies. See the multi-process section of
-the [README](README.md).
+the [README](../README.md).
 
 **How to recognize it**:
 

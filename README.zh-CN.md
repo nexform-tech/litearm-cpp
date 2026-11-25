@@ -1,13 +1,27 @@
+[English](README.md) | 简体中文
+
+litearm-cpp 是 LiteArm 机械臂的 C++ SDK，经 USB 串口直连固件，规划、运动学与动力学都在固件侧。
+
 # litearm-cpp
 
-LiteArm 机械臂的 **C++ SDK** —— 经由 USB 串口**直连固件**, 中间没有服务器、没有中间件。
-轨迹规划、运动学与动力学全部由固件承担, PC 侧只发点、收结果。
+中间没有服务器、没有中间件。PC 侧只发点、收结果。
 
 本仓是 [litearm-python](https://github.com/nexform-tech/litearm-python) 2.1.0 的 C++ 移植:
 同一套线协议、同一套语义、同一套安全判据, 逐条对照移植; 测试同样全离线可跑。
 
-> 接口全景见 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md);
-> 现场排查 (现象 → 原因 → 怎么办) 见 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)。
+## 文档与示例
+
+本 README 负责概览、构建、快速上手与安全规则。需要完整 API、可运行示例、现场排查、
+动力学辨识或 DH 模型说明时，按下表找。
+
+| 我需要… | 去看 |
+| --- | --- |
+| 可运行程序 / 硬件冒烟测试 | [examples/README.zh-CN.md](examples/README.zh-CN.md) —— 11 个示例、参数与安全约定 |
+| 完整 API、线协议或内部实现 | [docs/DEVELOPER_GUIDE.zh-CN.md](docs/DEVELOPER_GUIDE.zh-CN.md) |
+| 现场排查（现象 → 原因 → 处理） | [docs/TROUBLESHOOTING.zh-CN.md](docs/TROUBLESHOOTING.zh-CN.md) |
+| 动力学辨识与模型写回 | [docs/IDENTIFICATION.zh-CN.md](docs/IDENTIFICATION.zh-CN.md) |
+| DH 连杆系参数与 URDF 说明 | [DH/README.md](DH/README.md)（生成文件，英文） |
+| 未验证、已知不完美或有意分叉的条目 | [docs/UNVERIFIED_REGISTER.zh-CN.md](docs/UNVERIFIED_REGISTER.zh-CN.md) |
 
 ## 特点
 
@@ -459,38 +473,31 @@ C++ 里这一条的落法比 Python 更需要说清楚 —— 子进程里 `clos
 
 ## 例子
 
-见 [examples/README.md](examples/README.md):
-
-- `01_hello` —— 握手 + 固件版本 + 读状态
-- `02_movej` —— 关节运动
-- `03_move_p` —— 笛卡尔点到点
-- `04_ik_tcp` —— 逆运动学与当前位姿
-- `05_ff_tune` —— 动力学 / 控制律调参
-- `06_cartesian` —— 笛卡尔直线 / 圆弧 / 多路点
-- `07_vel_jitter_trace` —— 100Hz 状态流 + 300Hz 固件日志的双路逐拍采集
+`examples/` 下有 11 个可运行程序；完整索引、各示例参数与安全约定见
+[examples/README.md](examples/README.md)。
 
 样例**默认只读**; 任何会动的都要 `--go`:
 
 ```bash
+source env.sh
 ./run_example.sh 01_hello
 ./run_example.sh 02_movej --go
 ```
 
 ## 验证
 
-仓库当前不包含测试套件。构建与冒烟：
+运行离线构建与测试：
 
 ```bash
-./build.sh
-./build/litearm-cpp --help
+./build.sh --werror
+ctest --test-dir build --output-on-failure
 ```
 
-`litearm::testing::FakeTransport` 仍随库发布，写自己的离线测试时可以直接用它。本文档
-其他位置引用的 `tests/...` 描述的是 2026-10-26 删除的那套测试，属于历史引用。
+`litearm::testing::FakeTransport` 随库发布，写自己的离线测试时可以直接用它。
 
 ### 未验证登记册
 
-仓库根目录的 `UNVERIFIED_REGISTER.md` 逐条登记「**没验证的 / 已知不完美的 / 有意与参照实现
+`docs/UNVERIFIED_REGISTER.md` 逐条登记「**没验证的 / 已知不完美的 / 有意与参照实现
 分叉的**」—— 每条**必须带出处**（`文件:行号`），否则等于没登记（现场复核不了）。
 报告里说"测过了"之前先扫一眼它。
 
@@ -679,7 +686,7 @@ A 侧的结论一致（它的注释也写"凡'超时真的发生'的判据要用
 （读原值写回）、采集、自检、使能失能往返、急停与恢复；逐帧审计确认**没有发出任何不可逆命令**。
 
 **仍未在真机上跑**：四项不可逆（`save_params` / `model().commit()` / `reset_factory` /
-`enter_dfu` —— 用户裁决排除）＋ `activate()`（本板已激活）。详见 `UNVERIFIED_REGISTER.md`
+`enter_dfu` —— 用户裁决排除）＋ `activate()`（本板已激活）。详见 `docs/UNVERIFIED_REGISTER.md`
 第 14 条。别把"大部分验过"读成"全验过"。
 
 Windows 上用 MSVC + CMake 构建即可 (`cmake -S . -B build -G "Visual Studio 17 2022"`)。

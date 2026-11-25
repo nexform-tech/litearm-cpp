@@ -1,3 +1,5 @@
+[English](DEVELOPER_GUIDE.md) | 简体中文
+
 # litearm-cpp 开发者指南
 
 LiteArm 机械臂的 C++ SDK —— 经 USB 串口直连固件。

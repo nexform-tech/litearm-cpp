@@ -1,3 +1,5 @@
+English | [简体中文](DEVELOPER_GUIDE.zh-CN.md)
+
 This document describes how the litearm C++ SDK is built — the wire protocol, the read and write
 paths, and the safety invariants that hold them together — and it is written for anyone who is
 going to modify `src/`, `include/litearm/`, or the tests, or who needs to know why part of the API
