@@ -57,9 +57,11 @@ or `FirmwareMismatchError` (version mismatch).
 | Device not found — not plugged in, no driver, not `1d50:606f` | `lsusb`; call `litearm::find_cdc_port()` on its own and see what it returns |
 | Port already in use — another process or session still holds it open | On Linux, `fuser /dev/ttyACM0`; on Windows exclusivity is enforced by the OS, so if you cannot get it, you cannot open it |
 | Firmware too old (< 1.5.0), or the version string does not follow the convention | Read the `FirmwareMismatchError` message — it quotes the version string it **actually saw** |
+| Firmware variant is neither `7J` nor `test-7J` (for example the retired bench single-motor `1J`) | The `FirmwareMismatchError` message names the variant and quotes the **actual** version string |
 
-**What to do**: for `FirmwareMismatchError`, flash `Litearm1.5.0` or later; if
-the port is in use, close whatever is holding it.
+**What to do**: for `FirmwareMismatchError`, flash a `Litearm1.5.0` or later
+`-7J` image (an internal `-test-7J` build is accepted too); if the port is in
+use, close whatever is holding it.
 
 **Warning:** a device **re-enumeration** (unplug/replug, after `enter_dfu()`,
 a real power cycle) changes the `/dev/ttyACM*` **number**. A script with
